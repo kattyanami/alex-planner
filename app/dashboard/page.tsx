@@ -2,6 +2,7 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { UserButton } from "@clerk/nextjs";
 import { redirect } from "next/navigation";
 import { ensureUser, getUser, listInstruments } from "@/lib/db/queries";
+import { TestTagger } from "@/components/test-tagger";
 
 export default async function DashboardPage() {
   const { userId } = await auth();
@@ -53,6 +54,8 @@ export default async function DashboardPage() {
           ✓ Auth working (Clerk) · ✓ DB query working (Drizzle → Neon)
         </p>
       </section>
+
+      <TestTagger />
     </div>
   );
 }
