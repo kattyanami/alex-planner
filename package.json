@@ -14,6 +14,7 @@
     "db:seed": "tsx drizzle/seed/seed.ts"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.2.9",
     "@neondatabase/serverless": "^1.1.0",
     "drizzle-orm": "^0.45.2",
     "next": "16.2.4",
