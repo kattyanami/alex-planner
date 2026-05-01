@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "./index";
-import { instruments, users } from "./schema";
+import { accounts, instruments, positions, users } from "./schema";
+import type { Portfolio, UserProfile } from "@/lib/agents/reporter";
 
 export async function ensureUser(clerkUserId: string, displayName?: string) {
   await db
@@ -19,4 +20,298 @@ export async function getUser(clerkUserId: string) {
 
 export async function listInstruments(limit = 25) {
   return db.select().from(instruments).limit(limit);
+}
+
+export async function listAllInstruments() {
+  return db.select().from(instruments).orderBy(instruments.symbol);
+}
+
+// ---- Profile ---------------------------------------------------------------
+
+export type UserProfileFull = UserProfile & {
+  current_age?: number | null;
+  annual_contribution?: number | null;
+};
+
+export async function getUserProfile(
+  clerkUserId: string,
+): Promise<UserProfileFull | null> {
+  const u = await getUser(clerkUserId);
+  if (!u) return null;
+  return {
+    display_name: u.displayName,
+    years_until_retirement: u.yearsUntilRetirement,
+    target_retirement_income: u.targetRetirementIncome
+      ? Number(u.targetRetirementIncome)
+      : null,
+    current_age: u.currentAge,
+    annual_contribution: u.annualContribution
+      ? Number(u.annualContribution)
+      : null,
+  };
+}
+
+export async function updateUserProfile(
+  clerkUserId: string,
+  patch: {
+    yearsUntilRetirement?: number | null;
+    targetRetirementIncome?: number | null;
+    currentAge?: number | null;
+    annualContribution?: number | null;
+  },
+) {
+  await db
+    .update(users)
+    .set({
+      yearsUntilRetirement: patch.yearsUntilRetirement ?? null,
+      targetRetirementIncome:
+        patch.targetRetirementIncome != null
+          ? String(patch.targetRetirementIncome)
+          : null,
+      currentAge: patch.currentAge ?? null,
+      annualContribution:
+        patch.annualContribution != null
+          ? String(patch.annualContribution)
+          : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.clerkUserId, clerkUserId));
+}
+
+// ---- Portfolio (read) ------------------------------------------------------
+
+type AccountRow = typeof accounts.$inferSelect;
+type PositionRow = typeof positions.$inferSelect;
+type InstrumentRow = typeof instruments.$inferSelect;
+
+export async function getUserPortfolio(
+  clerkUserId: string,
+): Promise<Portfolio> {
+  const accountRows: AccountRow[] = await db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.clerkUserId, clerkUserId));
+
+  if (accountRows.length === 0) return { accounts: [] };
+
+  const accountIds = accountRows.map((a) => a.id);
+  const positionRows = await db
+    .select({ pos: positions, inst: instruments })
+    .from(positions)
+    .innerJoin(instruments, eq(positions.symbol, instruments.symbol))
+    .where(
+      // accountId IN (...)
+      accountIds.length === 1
+        ? eq(positions.accountId, accountIds[0])
+        : undefined,
+    );
+
+  // Drizzle doesn't have a clean inArray import here; if more than one account
+  // we fetch all then filter in-memory (small N). Could swap to inArray() later.
+  const filtered = positionRows.filter((r) =>
+    accountIds.includes(r.pos.accountId),
+  );
+
+  const byAccount = new Map<string, Array<{ pos: PositionRow; inst: InstrumentRow }>>();
+  for (const r of filtered) {
+    const list = byAccount.get(r.pos.accountId) ?? [];
+    list.push(r);
+    byAccount.set(r.pos.accountId, list);
+  }
+
+  return {
+    accounts: accountRows.map((a) => ({
+      name: a.accountName,
+      cash_balance: a.cashBalance ? Number(a.cashBalance) : 0,
+      positions: (byAccount.get(a.id) ?? []).map(({ pos, inst }) => ({
+        symbol: pos.symbol,
+        quantity: Number(pos.quantity),
+        instrument: {
+          name: inst.name,
+          instrument_type: inst.instrumentType,
+          current_price: inst.currentPrice ? Number(inst.currentPrice) : null,
+          allocation_asset_class:
+            (inst.allocationAssetClass as Record<string, number>) ?? null,
+          allocation_regions:
+            (inst.allocationRegions as Record<string, number>) ?? null,
+          allocation_sectors:
+            (inst.allocationSectors as Record<string, number>) ?? null,
+        },
+      })),
+    })),
+  };
+}
+
+export type AccountWithPositions = {
+  id: string;
+  name: string;
+  cashBalance: number;
+  positions: Array<{
+    id: string;
+    symbol: string;
+    quantity: number;
+    instrumentName: string;
+    currentPrice: number | null;
+  }>;
+};
+
+export async function getUserAccountsDetailed(
+  clerkUserId: string,
+): Promise<AccountWithPositions[]> {
+  const accountRows = await db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.clerkUserId, clerkUserId));
+
+  if (accountRows.length === 0) return [];
+
+  const accountIds = accountRows.map((a) => a.id);
+  const all = await db
+    .select({ pos: positions, inst: instruments })
+    .from(positions)
+    .innerJoin(instruments, eq(positions.symbol, instruments.symbol));
+
+  const filtered = all.filter((r) => accountIds.includes(r.pos.accountId));
+
+  return accountRows.map((a) => ({
+    id: a.id,
+    name: a.accountName,
+    cashBalance: a.cashBalance ? Number(a.cashBalance) : 0,
+    positions: filtered
+      .filter((r) => r.pos.accountId === a.id)
+      .map((r) => ({
+        id: r.pos.id,
+        symbol: r.pos.symbol,
+        quantity: Number(r.pos.quantity),
+        instrumentName: r.inst.name,
+        currentPrice: r.inst.currentPrice ? Number(r.inst.currentPrice) : null,
+      })),
+  }));
+}
+
+// ---- Portfolio (write) -----------------------------------------------------
+
+export async function addAccount(
+  clerkUserId: string,
+  name: string,
+  cashBalance = 0,
+) {
+  const [row] = await db
+    .insert(accounts)
+    .values({
+      clerkUserId,
+      accountName: name,
+      cashBalance: String(cashBalance),
+    })
+    .returning();
+  return row;
+}
+
+export async function removeAccount(clerkUserId: string, accountId: string) {
+  await db
+    .delete(accounts)
+    .where(
+      and(
+        eq(accounts.id, accountId),
+        eq(accounts.clerkUserId, clerkUserId),
+      ),
+    );
+}
+
+export async function setAccountCash(
+  clerkUserId: string,
+  accountId: string,
+  cashBalance: number,
+) {
+  await db
+    .update(accounts)
+    .set({ cashBalance: String(cashBalance), updatedAt: new Date() })
+    .where(
+      and(
+        eq(accounts.id, accountId),
+        eq(accounts.clerkUserId, clerkUserId),
+      ),
+    );
+}
+
+async function userOwnsAccount(clerkUserId: string, accountId: string) {
+  const [a] = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(
+      and(
+        eq(accounts.id, accountId),
+        eq(accounts.clerkUserId, clerkUserId),
+      ),
+    );
+  return !!a;
+}
+
+export async function addPosition(
+  clerkUserId: string,
+  accountId: string,
+  symbol: string,
+  quantity: number,
+) {
+  if (!(await userOwnsAccount(clerkUserId, accountId))) {
+    throw new Error("Account not found");
+  }
+  await db
+    .insert(positions)
+    .values({ accountId, symbol, quantity: String(quantity) })
+    .onConflictDoUpdate({
+      target: [positions.accountId, positions.symbol],
+      set: { quantity: String(quantity), updatedAt: new Date() },
+    });
+}
+
+export async function removePosition(
+  clerkUserId: string,
+  positionId: string,
+) {
+  // Lookup-then-delete to enforce ownership
+  const [row] = await db
+    .select({ accountId: positions.accountId })
+    .from(positions)
+    .where(eq(positions.id, positionId));
+  if (!row) return;
+  if (!(await userOwnsAccount(clerkUserId, row.accountId))) {
+    throw new Error("Not allowed");
+  }
+  await db.delete(positions).where(eq(positions.id, positionId));
+}
+
+// ---- Sample portfolio seed (idempotent, per user) --------------------------
+
+export async function seedSamplePortfolioForUser(clerkUserId: string) {
+  const existing = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(eq(accounts.clerkUserId, clerkUserId));
+  if (existing.length > 0) return { skipped: true as const };
+
+  const a401k = await addAccount(clerkUserId, "401(k)", 5_000);
+  const aRoth = await addAccount(clerkUserId, "Roth IRA", 1_500);
+
+  await Promise.all([
+    addPosition(clerkUserId, a401k.id, "SPY", 120),
+    addPosition(clerkUserId, a401k.id, "BND", 200),
+    addPosition(clerkUserId, aRoth.id, "QQQ", 40),
+    addPosition(clerkUserId, aRoth.id, "VEA", 150),
+    addPosition(clerkUserId, aRoth.id, "GLD", 8),
+  ]);
+
+  await updateUserProfile(clerkUserId, {
+    yearsUntilRetirement: 25,
+    targetRetirementIncome: 90_000,
+    currentAge: 40,
+    annualContribution: 10_000,
+  });
+
+  return { skipped: false as const };
+}
+
+export async function clearUserPortfolio(clerkUserId: string) {
+  // Cascades delete positions
+  await db.delete(accounts).where(eq(accounts.clerkUserId, clerkUserId));
 }

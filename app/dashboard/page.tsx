@@ -1,9 +1,17 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { UserButton } from "@clerk/nextjs";
 import { redirect } from "next/navigation";
-import { ensureUser, getUser, listInstruments } from "@/lib/db/queries";
+import {
+  ensureUser,
+  getUser,
+  getUserAccountsDetailed,
+  getUserProfile,
+  listAllInstruments,
+} from "@/lib/db/queries";
 import { TestTagger } from "@/components/test-tagger";
 import { TestAnalyze } from "@/components/test-analyze";
+import { ProfileEditor } from "@/components/profile-editor";
+import { PortfolioEditor } from "@/components/portfolio-editor";
 
 export const maxDuration = 60;
 
@@ -19,13 +27,24 @@ export default async function DashboardPage() {
 
   await ensureUser(userId, displayName || undefined);
 
-  const [user, sample] = await Promise.all([
+  const [user, profile, accounts, allInstruments] = await Promise.all([
     getUser(userId),
-    listInstruments(10),
+    getUserProfile(userId),
+    getUserAccountsDetailed(userId),
+    listAllInstruments(),
   ]);
 
+  const instrumentOptions = allInstruments.map((i) => ({
+    symbol: i.symbol,
+    name: i.name,
+    currentPrice: i.currentPrice ? Number(i.currentPrice) : null,
+  }));
+
+  const hasPortfolio =
+    accounts.length > 0 && accounts.some((a) => a.positions.length > 0);
+
   return (
-    <div className="p-8 max-w-4xl mx-auto w-full">
+    <div className="p-8 max-w-5xl mx-auto w-full">
       <header className="flex justify-between items-center mb-8 pb-4 border-b border-zinc-200 dark:border-zinc-800">
         <div>
           <h1 className="text-3xl font-bold">
@@ -38,28 +57,16 @@ export default async function DashboardPage() {
         <UserButton />
       </header>
 
-      <section>
-        <h2 className="text-xl font-semibold mb-4">
-          Available instruments ({sample.length} of 22)
-        </h2>
-        <ul className="grid grid-cols-2 gap-2">
-          {sample.map((i) => (
-            <li
-              key={i.symbol}
-              className="px-4 py-3 border border-zinc-200 dark:border-zinc-800 rounded-lg"
-            >
-              <div className="font-mono font-semibold">{i.symbol}</div>
-              <div className="text-sm text-zinc-500 truncate">{i.name}</div>
-            </li>
-          ))}
-        </ul>
-        <p className="text-xs text-zinc-500 mt-4">
-          ✓ Auth working (Clerk) · ✓ DB query working (Drizzle → Neon)
-        </p>
-      </section>
+      <ProfileEditor profile={profile} />
+      <PortfolioEditor accounts={accounts} instruments={instrumentOptions} />
+      <TestAnalyze hasPortfolio={hasPortfolio} />
 
-      <TestTagger />
-      <TestAnalyze />
+      <details className="mt-8">
+        <summary className="cursor-pointer text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 select-none">
+          Debug tools
+        </summary>
+        <TestTagger />
+      </details>
     </div>
   );
 }

@@ -21,6 +21,11 @@ export const users = pgTable("users", {
     precision: 12,
     scale: 2,
   }),
+  currentAge: integer("current_age"),
+  annualContribution: decimal("annual_contribution", {
+    precision: 12,
+    scale: 2,
+  }),
   assetClassTargets: jsonb("asset_class_targets").default(
     sql`'{"equity": 70, "fixed_income": 30}'::jsonb`,
   ),

@@ -29,7 +29,7 @@ type RetirementData = Extract<RetirementActionResult, { ok: true }>["result"];
 
 const initial = <T,>(): AgentState<T> => ({ status: "idle" });
 
-export function TestAnalyze() {
+export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean }) {
   const [tagger, setTagger] = useState<AgentState<TaggerData>>(initial);
   const [reporter, setReporter] = useState<AgentState<ReporterData>>(initial);
   const [charter, setCharter] = useState<AgentState<CharterData>>(initial);
@@ -98,13 +98,19 @@ export function TestAnalyze() {
       </div>
       <p className="text-sm text-zinc-500 mb-4">
         Planner fans out to <strong>Tagger × N + Reporter + Charter + Retirement</strong> via{" "}
-        <code className="text-xs">Promise.all</code>. Each card below updates independently as its agent finishes — the wall-clock is max(individual durations), not sum.
+        <code className="text-xs">Promise.all</code>. Runs against <strong>your</strong> portfolio + profile above. Each card below updates independently as its agent finishes.
       </p>
+
+      {!hasPortfolio && (
+        <div className="mb-4 p-3 rounded border border-amber-300 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-sm">
+          Add at least one holding above (or click <strong>Load sample portfolio</strong>) before running the analysis.
+        </div>
+      )}
 
       <div className="flex gap-2 mb-6">
         <button
           onClick={runAll}
-          disabled={anyRunning}
+          disabled={anyRunning || !hasPortfolio}
           className="h-10 px-5 rounded-full bg-black text-white dark:bg-white dark:text-black hover:opacity-90 transition disabled:opacity-50"
         >
           {anyRunning ? "Running 4 agents in parallel…" : "Analyze portfolio (Planner)"}

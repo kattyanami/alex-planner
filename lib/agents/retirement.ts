@@ -1,5 +1,6 @@
 import { generateText } from "ai";
 import { MODELS } from "@/lib/ai/models";
+import { LIFE_DEFAULTS, MARKET_ASSUMPTIONS, SIMULATION } from "@/lib/finance/assumptions";
 import type { Portfolio, UserProfile } from "./reporter";
 
 type Allocation = {
@@ -56,7 +57,6 @@ function calcAllocation(p: Portfolio): Allocation {
   };
 }
 
-// Box-Muller for gaussian random
 function gauss(mean: number, std: number): number {
   const u1 = Math.random() || Number.MIN_VALUE;
   const u2 = Math.random();
@@ -64,17 +64,36 @@ function gauss(mean: number, std: number): number {
   return mean + std * z;
 }
 
+function drawAnnualReturn(alloc: Allocation): number {
+  const m = MARKET_ASSUMPTIONS;
+  return (
+    alloc.equity * gauss(m.equity.mean, m.equity.std) +
+    alloc.bonds * gauss(m.bonds.mean, m.bonds.std) +
+    alloc.real_estate * gauss(m.realEstate.mean, m.realEstate.std) +
+    alloc.commodities * gauss(m.commodities.mean, m.commodities.std) +
+    alloc.cash * m.cash.mean
+  );
+}
+
+function expectedAnnualReturn(alloc: Allocation): number {
+  const m = MARKET_ASSUMPTIONS;
+  return (
+    alloc.equity * m.equity.mean +
+    alloc.bonds * m.bonds.mean +
+    alloc.real_estate * m.realEstate.mean +
+    alloc.commodities * m.commodities.mean +
+    alloc.cash * m.cash.mean
+  );
+}
+
 function monteCarlo(
   currentValue: number,
   yearsUntilRetirement: number,
   targetAnnualIncome: number,
   alloc: Allocation,
-  numSims = 500,
+  annualContribution: number,
+  numSims = SIMULATION.numSims,
 ) {
-  const eqMean = 0.07, eqStd = 0.18;
-  const bondMean = 0.04, bondStd = 0.05;
-  const reMean = 0.06, reStd = 0.12;
-
   let successful = 0;
   const finals: number[] = [];
   const yearsLasted: number[] = [];
@@ -82,40 +101,26 @@ function monteCarlo(
   for (let s = 0; s < numSims; s++) {
     let pv = currentValue;
     for (let y = 0; y < yearsUntilRetirement; y++) {
-      const r =
-        alloc.equity * gauss(eqMean, eqStd) +
-        alloc.bonds * gauss(bondMean, bondStd) +
-        alloc.real_estate * gauss(reMean, reStd) +
-        alloc.cash * 0.02;
-      pv = pv * (1 + r) + 10_000;
+      pv = pv * (1 + drawAnnualReturn(alloc)) + annualContribution;
     }
 
     let withdrawal = targetAnnualIncome;
     let yLasted = 0;
-    for (let y = 0; y < 30; y++) {
+    for (let y = 0; y < SIMULATION.retirementHorizonYears; y++) {
       if (pv <= 0) break;
-      withdrawal *= 1.03;
-      const r =
-        alloc.equity * gauss(eqMean, eqStd) +
-        alloc.bonds * gauss(bondMean, bondStd) +
-        alloc.real_estate * gauss(reMean, reStd) +
-        alloc.cash * 0.02;
-      pv = pv * (1 + r) - withdrawal;
+      withdrawal *= 1 + SIMULATION.withdrawalInflation;
+      pv = pv * (1 + drawAnnualReturn(alloc)) - withdrawal;
       if (pv > 0) yLasted++;
     }
     finals.push(Math.max(0, pv));
     yearsLasted.push(yLasted);
-    if (yLasted >= 30) successful++;
+    if (yLasted >= SIMULATION.retirementHorizonYears) successful++;
   }
 
   finals.sort((a, b) => a - b);
-  const expectedReturn =
-    alloc.equity * eqMean +
-    alloc.bonds * bondMean +
-    alloc.real_estate * reMean +
-    alloc.cash * 0.02;
+  const expReturn = expectedAnnualReturn(alloc);
   let expected = currentValue;
-  for (let y = 0; y < yearsUntilRetirement; y++) expected = expected * (1 + expectedReturn) + 10_000;
+  for (let y = 0; y < yearsUntilRetirement; y++) expected = expected * (1 + expReturn) + annualContribution;
 
   return {
     success_rate: Math.round((successful / numSims) * 1000) / 10,
@@ -127,28 +132,30 @@ function monteCarlo(
   };
 }
 
-function projections(currentValue: number, yearsUntilRetirement: number, alloc: Allocation, currentAge: number) {
-  const expectedReturn =
-    alloc.equity * 0.07 +
-    alloc.bonds * 0.04 +
-    alloc.real_estate * 0.06 +
-    alloc.cash * 0.02;
+function projections(
+  currentValue: number,
+  yearsUntilRetirement: number,
+  alloc: Allocation,
+  currentAge: number,
+  annualContribution: number,
+) {
+  const expReturn = expectedAnnualReturn(alloc);
 
   const out: Array<{ year: number; age: number; portfolio_value: number; annual_income: number; phase: "accumulation" | "retirement" }> = [];
   let pv = currentValue;
   const milestones: number[] = [];
-  for (let y = 0; y <= yearsUntilRetirement + 30; y += 5) milestones.push(y);
+  for (let y = 0; y <= yearsUntilRetirement + SIMULATION.retirementHorizonYears; y += 5) milestones.push(y);
 
   let lastY = 0;
   for (const y of milestones) {
     const age = currentAge + y;
     const stepYears = y - lastY;
     if (y <= yearsUntilRetirement) {
-      for (let i = 0; i < stepYears; i++) pv = pv * (1 + expectedReturn) + 10_000;
+      for (let i = 0; i < stepYears; i++) pv = pv * (1 + expReturn) + annualContribution;
       out.push({ year: y, age, portfolio_value: Math.round(pv), annual_income: 0, phase: "accumulation" });
     } else {
-      const annual = Math.round(pv * 0.04);
-      for (let i = 0; i < stepYears; i++) pv = pv * (1 + expectedReturn) - annual;
+      const annual = Math.round(pv * SIMULATION.safeWithdrawalRate);
+      for (let i = 0; i < stepYears; i++) pv = pv * (1 + expReturn) - annual;
       if (pv > 0) out.push({ year: y, age, portfolio_value: Math.round(pv), annual_income: annual, phase: "retirement" });
     }
     lastY = y;
@@ -165,15 +172,41 @@ const RETIREMENT_INSTRUCTIONS = `You are a Retirement Specialist. You receive pr
 
 Use specific numbers from the data. Be honest about gaps. Avoid generic platitudes.`;
 
-export async function analyzeRetirement(portfolio: Portfolio, user: UserProfile, currentAge = 40) {
+export type RetirementInputs = {
+  currentAge?: number;
+  annualContribution?: number;
+};
+
+export async function analyzeRetirement(
+  portfolio: Portfolio,
+  user: UserProfile,
+  inputs: RetirementInputs = {},
+) {
   const start = Date.now();
   const portfolioValue = calcPortfolioValue(portfolio);
   const allocation = calcAllocation(portfolio);
-  const yearsUntilRetirement = user.years_until_retirement ?? 30;
-  const targetIncome = user.target_retirement_income ?? 80_000;
+  const yearsUntilRetirement =
+    user.years_until_retirement ?? LIFE_DEFAULTS.yearsUntilRetirement;
+  const targetIncome =
+    user.target_retirement_income ?? LIFE_DEFAULTS.targetRetirementIncome;
+  const currentAge = inputs.currentAge ?? LIFE_DEFAULTS.currentAge;
+  const annualContribution =
+    inputs.annualContribution ?? LIFE_DEFAULTS.annualContribution;
 
-  const mc = monteCarlo(portfolioValue, yearsUntilRetirement, targetIncome, allocation);
-  const proj = projections(portfolioValue, yearsUntilRetirement, allocation, currentAge);
+  const mc = monteCarlo(
+    portfolioValue,
+    yearsUntilRetirement,
+    targetIncome,
+    allocation,
+    annualContribution,
+  );
+  const proj = projections(
+    portfolioValue,
+    yearsUntilRetirement,
+    allocation,
+    currentAge,
+    annualContribution,
+  );
 
   const fmt = (n: number) => `$${n.toLocaleString("en-US")}`;
   const allocStr = Object.entries(allocation)
@@ -190,7 +223,7 @@ export async function analyzeRetirement(portfolio: Portfolio, user: UserProfile,
     )
     .join("\n");
 
-  const safeWithdrawal = portfolioValue * 0.04;
+  const safeWithdrawal = portfolioValue * SIMULATION.safeWithdrawalRate;
   const gap = targetIncome - safeWithdrawal;
 
   const { text, usage } = await generateText({
@@ -204,20 +237,21 @@ export async function analyzeRetirement(portfolio: Portfolio, user: UserProfile,
 - Years to Retirement: ${yearsUntilRetirement}
 - Target Annual Income: ${fmt(targetIncome)}
 - Current Age: ${currentAge}
+- Annual Contribution: ${fmt(annualContribution)}
 
-## Monte Carlo (500 scenarios, 30-year retirement)
+## Monte Carlo (${SIMULATION.numSims} scenarios, ${SIMULATION.retirementHorizonYears}-year retirement)
 - Success Rate: ${mc.success_rate}%
 - Expected Portfolio Value at Retirement: ${fmt(mc.expected_at_retirement)}
 - 10th Percentile: ${fmt(mc.p10)} (worst case)
 - Median Final Value: ${fmt(mc.median_final)}
 - 90th Percentile: ${fmt(mc.p90)} (best case)
-- Average Years Portfolio Lasts: ${mc.avg_years_lasted} / 30
+- Average Years Portfolio Lasts: ${mc.avg_years_lasted} / ${SIMULATION.retirementHorizonYears}
 
 ## Milestones
 ${projLines}
 
 ## Safe Withdrawal Rate Gap
-- 4% rule on current portfolio: ${fmt(safeWithdrawal)} initial annual income
+- ${(SIMULATION.safeWithdrawalRate * 100).toFixed(0)}% rule on current portfolio: ${fmt(safeWithdrawal)} initial annual income
 - Target Income: ${fmt(targetIncome)}
 - Gap: ${fmt(gap)} ${gap > 0 ? "(target exceeds current safe withdrawal)" : "(target is achievable)"}
 
