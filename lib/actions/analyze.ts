@@ -1,8 +1,10 @@
 "use server";
 
 import { auth } from "@clerk/nextjs/server";
-import { runPortfolioAnalysis } from "@/lib/agents/planner";
-import type { Portfolio, UserProfile } from "@/lib/agents/reporter";
+import { classifyInstrument } from "@/lib/agents/tagger";
+import { generateReport, type Portfolio, type UserProfile } from "@/lib/agents/reporter";
+import { generateCharts } from "@/lib/agents/charter";
+import { analyzeRetirement } from "@/lib/agents/retirement";
 
 const SAMPLE_PORTFOLIO: Portfolio = {
   accounts: [
@@ -87,13 +89,83 @@ const SAMPLE_USER: UserProfile = {
   target_retirement_income: 90_000,
 };
 
-export async function analyzePortfolio() {
+async function requireAuth() {
   const { userId } = await auth();
-  if (!userId) return { error: "Not authenticated" };
+  if (!userId) throw new Error("Not authenticated");
+}
 
+export type TaggerActionResult =
+  | {
+      ok: true;
+      results: Array<{
+        symbol: string;
+        classification: Awaited<ReturnType<typeof classifyInstrument>>["classification"];
+        tokensIn: number;
+        tokensOut: number;
+        ms: number;
+      }>;
+      totalMs: number;
+    }
+  | { error: string };
+
+export async function runTaggerAgent(): Promise<TaggerActionResult> {
   try {
-    const result = await runPortfolioAnalysis(SAMPLE_PORTFOLIO, SAMPLE_USER);
-    return { ok: true as const, ...result };
+    await requireAuth();
+    const start = Date.now();
+    const positions = SAMPLE_PORTFOLIO.accounts.flatMap((a) => a.positions);
+    const results = await Promise.all(
+      positions.map(async (p) => {
+        const r = await classifyInstrument(
+          p.symbol,
+          p.instrument.name,
+          p.instrument.instrument_type ?? "etf",
+        );
+        return { symbol: p.symbol, ...r };
+      }),
+    );
+    return { ok: true, results, totalMs: Date.now() - start };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
+  }
+}
+
+export type ReporterActionResult =
+  | { ok: true; result: Awaited<ReturnType<typeof generateReport>> }
+  | { error: string };
+
+export async function runReporterAgent(): Promise<ReporterActionResult> {
+  try {
+    await requireAuth();
+    const result = await generateReport(SAMPLE_PORTFOLIO, SAMPLE_USER);
+    return { ok: true, result };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
+  }
+}
+
+export type CharterActionResult =
+  | { ok: true; result: Awaited<ReturnType<typeof generateCharts>> }
+  | { error: string };
+
+export async function runCharterAgent(): Promise<CharterActionResult> {
+  try {
+    await requireAuth();
+    const result = await generateCharts(SAMPLE_PORTFOLIO);
+    return { ok: true, result };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
+  }
+}
+
+export type RetirementActionResult =
+  | { ok: true; result: Awaited<ReturnType<typeof analyzeRetirement>> }
+  | { error: string };
+
+export async function runRetirementAgent(): Promise<RetirementActionResult> {
+  try {
+    await requireAuth();
+    const result = await analyzeRetirement(SAMPLE_PORTFOLIO, SAMPLE_USER);
+    return { ok: true, result };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unknown error" };
   }
