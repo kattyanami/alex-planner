@@ -3,6 +3,9 @@ import { UserButton } from "@clerk/nextjs";
 import { redirect } from "next/navigation";
 import { ensureUser, getUser, listInstruments } from "@/lib/db/queries";
 import { TestTagger } from "@/components/test-tagger";
+import { TestAnalyze } from "@/components/test-analyze";
+
+export const maxDuration = 60;
 
 export default async function DashboardPage() {
   const { userId } = await auth();
@@ -56,6 +59,7 @@ export default async function DashboardPage() {
       </section>
 
       <TestTagger />
+      <TestAnalyze />
     </div>
   );
 }

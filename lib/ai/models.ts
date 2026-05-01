@@ -1,9 +1,8 @@
 /**
  * Model registry — direct OpenAI API (uses OPENAI_API_KEY env var).
  *
- * Mixed fleet strategy:
- *   - Cheap fleet (gpt-5-mini): Tagger, Charter
- *   - Smart fleet (gpt-5): Planner, Reporter, Retirement, Researcher
+ * All agents use gpt-5-mini for the personal-use cost profile.
+ * If Reporter/Planner output quality lags, swap them up to gpt-5 individually.
  */
 
 import { openai } from "@ai-sdk/openai";
@@ -11,10 +10,10 @@ import { openai } from "@ai-sdk/openai";
 export const MODELS = {
   tagger: openai("gpt-5-mini"),
   charter: openai("gpt-5-mini"),
-  planner: openai("gpt-5"),
-  reporter: openai("gpt-5"),
-  retirement: openai("gpt-5"),
-  researcher: openai("gpt-5"),
+  planner: openai("gpt-5-mini"),
+  reporter: openai("gpt-5-mini"),
+  retirement: openai("gpt-5-mini"),
+  researcher: openai("gpt-5-mini"),
 };
 
 export type AgentName = keyof typeof MODELS;
