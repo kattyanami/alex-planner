@@ -35,6 +35,50 @@ export async function listAllInstruments() {
   return db.select().from(instruments).orderBy(instruments.symbol);
 }
 
+export async function getInstrumentBySymbol(symbol: string) {
+  const [row] = await db
+    .select()
+    .from(instruments)
+    .where(eq(instruments.symbol, symbol));
+  return row ?? null;
+}
+
+export async function addInstrument(input: {
+  symbol: string;
+  name: string;
+  instrumentType: string;
+  currentPrice: number;
+  allocationAssetClass: Record<string, number>;
+  allocationRegions: Record<string, number>;
+  allocationSectors: Record<string, number>;
+}) {
+  const [row] = await db
+    .insert(instruments)
+    .values({
+      symbol: input.symbol,
+      name: input.name,
+      instrumentType: input.instrumentType,
+      currentPrice: String(input.currentPrice),
+      allocationAssetClass: input.allocationAssetClass,
+      allocationRegions: input.allocationRegions,
+      allocationSectors: input.allocationSectors,
+    })
+    .onConflictDoUpdate({
+      target: instruments.symbol,
+      set: {
+        name: input.name,
+        instrumentType: input.instrumentType,
+        currentPrice: String(input.currentPrice),
+        allocationAssetClass: input.allocationAssetClass,
+        allocationRegions: input.allocationRegions,
+        allocationSectors: input.allocationSectors,
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+  return row;
+}
+
 // ---- Profile ---------------------------------------------------------------
 
 export type UserProfileFull = UserProfile & {

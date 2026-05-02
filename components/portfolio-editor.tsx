@@ -21,9 +21,8 @@ import {
   Field,
   Input,
 } from "@/components/ui/primitives";
+import { InstrumentCombobox, type InstrumentOption } from "@/components/instrument-combobox";
 import { fmtUsd } from "@/lib/format";
-
-type InstrumentOption = { symbol: string; name: string; currentPrice: number | null };
 
 export function PortfolioEditor({
   accounts,
@@ -263,25 +262,18 @@ function PositionForm({
       className="grid grid-cols-[1fr_auto_auto] gap-2 items-end pt-3 border-t border-zinc-200/60 dark:border-zinc-800/60"
     >
       <Field label="Add holding">
-        <select
-          name="symbol"
-          required
-          defaultValue=""
-          className="h-9 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
-        >
-          <option value="" disabled>
-            Pick an instrument…
-          </option>
-          {instruments.map((i) => (
-            <option key={i.symbol} value={i.symbol}>
-              {i.symbol} — {i.name}
-              {i.currentPrice ? ` ($${i.currentPrice})` : ""}
-            </option>
-          ))}
-        </select>
+        <InstrumentCombobox options={instruments} required />
       </Field>
       <Field label="Quantity">
-        <Input name="quantity" type="number" step="any" min="0" required placeholder="100" className="w-24" />
+        <Input
+          name="quantity"
+          type="number"
+          step="any"
+          min="0"
+          required
+          placeholder="100"
+          className="w-24"
+        />
       </Field>
       <Button type="submit" disabled={pending}>
         <Plus className="size-4" />
