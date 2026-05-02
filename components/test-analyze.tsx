@@ -2,15 +2,29 @@
 
 import { useEffect, useState } from "react";
 import {
-  runTaggerAgent,
-  runReporterAgent,
+  Activity,
+  AlertCircle,
+  Check,
+  FileText,
+  Loader2,
+  PieChart as PieIcon,
+  Sparkles,
+  Tag,
+  Target,
+} from "lucide-react";
+import {
   runCharterAgent,
+  runReporterAgent,
   runRetirementAgent,
-  type TaggerActionResult,
-  type ReporterActionResult,
+  runTaggerAgent,
   type CharterActionResult,
+  type ReporterActionResult,
   type RetirementActionResult,
+  type TaggerActionResult,
 } from "@/lib/actions/analyze";
+import { Badge, Button, Card, CardBody, CardHeader, EmptyState } from "@/components/ui/primitives";
+import { PortfolioChart } from "@/components/charts/portfolio-charts";
+import { fmtUsd } from "@/lib/format";
 
 type AgentStatus = "idle" | "running" | "done" | "error";
 
@@ -41,6 +55,12 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
     charter.status === "running" ||
     retirement.status === "running";
 
+  const everRan =
+    tagger.status !== "idle" ||
+    reporter.status !== "idle" ||
+    charter.status !== "idle" ||
+    retirement.status !== "idle";
+
   async function runAll() {
     const now = Date.now();
     setTagger({ status: "running", startedAt: now });
@@ -48,7 +68,6 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
     setCharter({ status: "running", startedAt: now });
     setRetirement({ status: "running", startedAt: now });
 
-    // Fire all four in parallel — each settles independently and updates its own card.
     void runTaggerAgent().then((r) => {
       if ("error" in r) setTagger({ status: "error", error: r.error, finishedAt: Date.now() });
       else setTagger({ status: "done", data: r, finishedAt: Date.now() });
@@ -87,48 +106,47 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
   const cost = (totalIn * 0.25 + totalOut * 2) / 1_000_000;
 
   return (
-    <section className="mt-8 p-6 border border-zinc-200 dark:border-zinc-800 rounded-lg">
-      <div className="flex items-baseline justify-between mb-1 flex-wrap gap-2">
-        <h2 className="text-xl font-semibold">Multi-agent portfolio analysis (Planner)</h2>
-        {(totalIn > 0 || totalOut > 0) && (
-          <div className="text-xs text-zinc-500 font-mono">
-            {totalIn} in / {totalOut} out · ${cost.toFixed(4)}
-          </div>
+    <div className="space-y-4">
+      <Card>
+        <CardHeader
+          icon={<Sparkles className="size-4" />}
+          title="Multi-agent portfolio analysis"
+          description="Planner fans out to Tagger × N + Reporter + Charter + Retirement in parallel. Each card updates independently as its agent finishes."
+          action={
+            <div className="flex items-center gap-2">
+              {totalIn + totalOut > 0 && (
+                <Badge tone="neutral" className="font-mono">
+                  {totalIn}/{totalOut} · ${cost.toFixed(4)}
+                </Badge>
+              )}
+              {everRan && !anyRunning && (
+                <Button variant="secondary" size="sm" onClick={reset}>
+                  Reset
+                </Button>
+              )}
+              <Button onClick={runAll} disabled={anyRunning || !hasPortfolio}>
+                {anyRunning ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                {anyRunning ? "Running…" : "Analyze"}
+              </Button>
+            </div>
+          }
+        />
+        {!hasPortfolio && (
+          <CardBody>
+            <EmptyState
+              icon={<AlertCircle className="size-5" />}
+              title="No portfolio to analyze"
+              description="Add at least one holding before running the multi-agent analysis."
+            />
+          </CardBody>
         )}
-      </div>
-      <p className="text-sm text-zinc-500 mb-4">
-        Planner fans out to <strong>Tagger × N + Reporter + Charter + Retirement</strong> via{" "}
-        <code className="text-xs">Promise.all</code>. Runs against <strong>your</strong> portfolio + profile above. Each card below updates independently as its agent finishes.
-      </p>
+      </Card>
 
-      {!hasPortfolio && (
-        <div className="mb-4 p-3 rounded border border-amber-300 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-sm">
-          Add at least one holding above (or click <strong>Load sample portfolio</strong>) before running the analysis.
-        </div>
-      )}
-
-      <div className="flex gap-2 mb-6">
-        <button
-          onClick={runAll}
-          disabled={anyRunning || !hasPortfolio}
-          className="h-10 px-5 rounded-full bg-black text-white dark:bg-white dark:text-black hover:opacity-90 transition disabled:opacity-50"
-        >
-          {anyRunning ? "Running 4 agents in parallel…" : "Analyze portfolio (Planner)"}
-        </button>
-        {(tagger.status !== "idle" || reporter.status !== "idle") && !anyRunning && (
-          <button
-            onClick={reset}
-            className="h-10 px-5 rounded-full border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition"
-          >
-            Reset
-          </button>
-        )}
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2">
         <AgentCard
           title="Tagger"
-          subtitle="Re-classifies each holding (1 call per position)"
+          icon={<Tag className="size-4" />}
+          subtitle="Re-classifies each holding"
           state={tagger}
           stats={
             tagger.data
@@ -143,18 +161,19 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
           {tagger.data && (
             <div className="space-y-1.5">
               {tagger.data.results.map((t) => (
-                <div key={t.symbol} className="text-xs bg-zinc-50 dark:bg-zinc-900 p-2 rounded font-mono">
-                  <span className="font-semibold">{t.symbol}</span>{" "}
-                  · ${t.classification.current_price.toFixed(2)}
-                  {" · "}
-                  {Object.entries(t.classification.allocation_asset_class)
-                    .filter(([, v]) => v > 0)
-                    .map(([k, v]) => `${k}: ${v.toFixed(0)}%`)
-                    .join(", ")}
-                  {" · "}
-                  <span className="text-zinc-500">
-                    {t.tokensIn}/{t.tokensOut} · {t.ms}ms
+                <div
+                  key={t.symbol}
+                  className="flex items-center gap-3 text-xs px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-900/60"
+                >
+                  <Badge tone="accent" className="font-mono shrink-0">{t.symbol}</Badge>
+                  <span className="tabular-nums shrink-0">{fmtUsd(t.classification.current_price)}</span>
+                  <span className="text-zinc-500 truncate flex-1">
+                    {Object.entries(t.classification.allocation_asset_class)
+                      .filter(([, v]) => v > 0)
+                      .map(([k, v]) => `${k}: ${v.toFixed(0)}%`)
+                      .join(", ")}
                   </span>
+                  <span className="text-zinc-400 font-mono shrink-0">{t.ms}ms</span>
                 </div>
               ))}
             </div>
@@ -163,7 +182,8 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
 
         <AgentCard
           title="Reporter"
-          subtitle="Markdown portfolio analysis (generateText)"
+          icon={<FileText className="size-4" />}
+          subtitle="Markdown portfolio analysis"
           state={reporter}
           stats={
             reporter.data
@@ -172,7 +192,7 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
           }
         >
           {reporter.data && (
-            <pre className="text-xs whitespace-pre-wrap font-sans bg-zinc-50 dark:bg-zinc-900 p-3 rounded max-h-[300px] overflow-y-auto">
+            <pre className="text-xs whitespace-pre-wrap font-sans bg-zinc-50 dark:bg-zinc-900/60 p-3 rounded-lg max-h-[320px] overflow-y-auto leading-relaxed">
               {reporter.data.markdown}
             </pre>
           )}
@@ -180,7 +200,8 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
 
         <AgentCard
           title="Charter"
-          subtitle="Chart specs from pre-computed aggregates (generateObject)"
+          icon={<PieIcon className="size-4" />}
+          subtitle="Chart specs + visualizations"
           state={charter}
           stats={
             charter.data
@@ -189,24 +210,17 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
           }
         >
           {charter.data && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {charter.data.charts.map((c) => (
-                <div key={c.key} className="bg-zinc-50 dark:bg-zinc-900 p-2 rounded">
-                  <div className="text-xs font-semibold">
-                    {c.title}{" "}
-                    <span className="text-zinc-500 font-normal">({c.type})</span>
+                <div
+                  key={c.key}
+                  className="rounded-lg bg-zinc-50 dark:bg-zinc-900/60 p-3"
+                >
+                  <div className="flex items-baseline justify-between mb-2">
+                    <div className="text-sm font-semibold">{c.title}</div>
+                    <Badge tone="neutral">{c.type}</Badge>
                   </div>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {c.data.map((d) => (
-                      <span
-                        key={d.name}
-                        className="text-[10px] px-1.5 py-0.5 rounded font-mono"
-                        style={{ backgroundColor: d.color + "33", color: d.color }}
-                      >
-                        {d.name}: ${d.value.toLocaleString()}
-                      </span>
-                    ))}
-                  </div>
+                  <PortfolioChart spec={c} />
                 </div>
               ))}
             </div>
@@ -215,7 +229,8 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
 
         <AgentCard
           title="Retirement"
-          subtitle="Monte Carlo (500 sims, TS) + LLM commentary"
+          icon={<Target className="size-4" />}
+          subtitle="Monte Carlo (500 sims) + analysis"
           state={retirement}
           stats={
             retirement.data
@@ -224,89 +239,140 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
           }
         >
           {retirement.data && (
-            <div className="space-y-2">
-              <div className="grid grid-cols-2 gap-1.5 text-xs">
-                <Stat label="Success" value={`${retirement.data.metrics.monteCarlo.success_rate}%`} />
-                <Stat label="Expected at retirement" value={`$${retirement.data.metrics.monteCarlo.expected_at_retirement.toLocaleString()}`} />
-                <Stat label="Median final" value={`$${retirement.data.metrics.monteCarlo.median_final.toLocaleString()}`} />
-                <Stat label="Avg years lasted" value={`${retirement.data.metrics.monteCarlo.avg_years_lasted}/30`} />
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <MetricTile
+                  label="Success rate"
+                  value={`${retirement.data.metrics.monteCarlo.success_rate}%`}
+                  tone={
+                    retirement.data.metrics.monteCarlo.success_rate >= 80
+                      ? "success"
+                      : retirement.data.metrics.monteCarlo.success_rate >= 50
+                        ? "warning"
+                        : "danger"
+                  }
+                />
+                <MetricTile
+                  label="Expected at retirement"
+                  value={fmtUsd(retirement.data.metrics.monteCarlo.expected_at_retirement, { compact: true })}
+                />
+                <MetricTile
+                  label="Median final"
+                  value={fmtUsd(retirement.data.metrics.monteCarlo.median_final, { compact: true })}
+                />
+                <MetricTile
+                  label="Avg years lasted"
+                  value={`${retirement.data.metrics.monteCarlo.avg_years_lasted}/30`}
+                />
               </div>
-              <pre className="text-xs whitespace-pre-wrap font-sans bg-zinc-50 dark:bg-zinc-900 p-3 rounded max-h-[300px] overflow-y-auto">
+              <pre className="text-xs whitespace-pre-wrap font-sans bg-zinc-50 dark:bg-zinc-900/60 p-3 rounded-lg max-h-[320px] overflow-y-auto leading-relaxed">
                 {retirement.data.markdown}
               </pre>
             </div>
           )}
         </AgentCard>
       </div>
-    </section>
+    </div>
   );
 }
 
 function AgentCard({
   title,
   subtitle,
+  icon,
   state,
   stats,
   children,
 }: {
   title: string;
   subtitle: string;
+  icon: React.ReactNode;
   state: AgentState<unknown>;
   stats?: { tokensIn: number; tokensOut: number; ms: number };
   children?: React.ReactNode;
 }) {
   return (
-    <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 flex flex-col">
-      <div className="flex items-start justify-between gap-2 mb-1">
-        <div className="flex items-center gap-2">
-          <StatusDot status={state.status} />
-          <h3 className="font-semibold">{title}</h3>
+    <Card>
+      <div className="px-5 py-4 border-b border-zinc-200/60 dark:border-zinc-800/60 flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3 min-w-0">
+          <div
+            className={`mt-0.5 size-9 grid place-items-center rounded-lg shrink-0 transition ${
+              state.status === "done"
+                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                : state.status === "running"
+                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  : state.status === "error"
+                    ? "bg-red-500/10 text-red-600 dark:text-red-400"
+                    : "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400"
+            }`}
+          >
+            {icon}
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold tracking-tight">{title}</h3>
+              <StatusBadge status={state.status} />
+            </div>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{subtitle}</p>
+          </div>
         </div>
         {stats && (
-          <span className="text-[10px] text-zinc-500 font-mono">
-            {stats.tokensIn}/{stats.tokensOut} · {stats.ms}ms
-          </span>
+          <div className="text-right text-[10px] text-zinc-500 font-mono tabular-nums shrink-0">
+            <div>
+              {stats.tokensIn}/{stats.tokensOut}
+            </div>
+            <div>{stats.ms}ms</div>
+          </div>
         )}
       </div>
-      <p className="text-xs text-zinc-500 mb-3">{subtitle}</p>
-      <div className="flex-1">
+      <CardBody>
         {state.status === "idle" && (
-          <div className="text-xs text-zinc-400 italic">Waiting for Planner trigger…</div>
+          <div className="text-center py-6">
+            <div className="text-sm text-zinc-500 dark:text-zinc-400">Waiting for Planner trigger…</div>
+          </div>
         )}
         {state.status === "running" && (
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <Spinner /> Running on gpt-5-mini…
-            {state.startedAt && (
-              <ElapsedCounter startedAt={state.startedAt} />
-            )}
+          <div className="text-center py-6 space-y-3">
+            <Loader2 className="size-6 mx-auto animate-spin text-amber-500" />
+            <div className="text-sm text-zinc-500 dark:text-zinc-400">
+              Running on gpt-5-mini ·{" "}
+              {state.startedAt && <ElapsedCounter startedAt={state.startedAt} />}
+            </div>
+            <SkeletonRows />
           </div>
         )}
         {state.status === "error" && (
-          <div className="text-xs text-red-600 dark:text-red-400 font-mono break-words">
+          <div className="rounded-lg p-3 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 text-sm font-mono break-words">
             {state.error}
           </div>
         )}
         {state.status === "done" && children}
-      </div>
-    </div>
+      </CardBody>
+    </Card>
   );
 }
 
-function StatusDot({ status }: { status: AgentStatus }) {
-  const cls =
-    status === "idle"
-      ? "bg-zinc-400"
-      : status === "running"
-        ? "bg-amber-500 animate-pulse"
-        : status === "done"
-          ? "bg-emerald-500"
-          : "bg-red-500";
-  return <span className={`inline-block w-2 h-2 rounded-full ${cls}`} aria-hidden />;
-}
-
-function Spinner() {
+function StatusBadge({ status }: { status: AgentStatus }) {
+  if (status === "idle") return <Badge tone="neutral">idle</Badge>;
+  if (status === "running")
+    return (
+      <Badge tone="warning">
+        <Activity className="size-2.5 animate-pulse" />
+        running
+      </Badge>
+    );
+  if (status === "done")
+    return (
+      <Badge tone="success">
+        <Check className="size-2.5" />
+        done
+      </Badge>
+    );
   return (
-    <span className="inline-block w-3 h-3 border-2 border-zinc-300 border-t-zinc-700 dark:border-zinc-700 dark:border-t-zinc-200 rounded-full animate-spin" />
+    <Badge tone="danger">
+      <AlertCircle className="size-2.5" />
+      error
+    </Badge>
   );
 }
 
@@ -316,14 +382,43 @@ function ElapsedCounter({ startedAt }: { startedAt: number }) {
     const id = setInterval(() => setNow(Date.now()), 100);
     return () => clearInterval(id);
   }, []);
-  return <span className="font-mono">{((now - startedAt) / 1000).toFixed(1)}s</span>;
+  return <span className="font-mono tabular-nums">{((now - startedAt) / 1000).toFixed(1)}s</span>;
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function SkeletonRows() {
   return (
-    <div className="px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-900">
-      <div className="text-zinc-500 text-[10px]">{label}</div>
-      <div className="font-mono">{value}</div>
+    <div className="space-y-2 pt-2">
+      <div className="h-3 rounded bg-zinc-200/60 dark:bg-zinc-800/60 animate-pulse w-full" />
+      <div className="h-3 rounded bg-zinc-200/60 dark:bg-zinc-800/60 animate-pulse w-5/6" />
+      <div className="h-3 rounded bg-zinc-200/60 dark:bg-zinc-800/60 animate-pulse w-2/3" />
     </div>
   );
 }
+
+function MetricTile({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  tone?: "default" | "success" | "warning" | "danger";
+}) {
+  const cls =
+    tone === "success"
+      ? "from-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-400"
+      : tone === "warning"
+        ? "from-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-400"
+        : tone === "danger"
+          ? "from-red-500/10 border-red-500/20 text-red-700 dark:text-red-400"
+          : "from-zinc-500/5 border-zinc-200 dark:border-zinc-800";
+  return (
+    <div className={`rounded-lg border bg-gradient-to-br to-transparent p-3 ${cls}`}>
+      <div className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-medium">
+        {label}
+      </div>
+      <div className="mt-0.5 font-semibold tabular-nums">{value}</div>
+    </div>
+  );
+}
+
