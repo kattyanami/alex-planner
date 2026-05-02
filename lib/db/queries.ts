@@ -43,12 +43,14 @@ export async function getInstrumentBySymbol(symbol: string) {
   return row ?? null;
 }
 
+export type PriceSource = "tagger" | "yahoo" | "polygon";
+
 export async function addInstrument(input: {
   symbol: string;
   name: string;
   instrumentType: string;
   currentPrice: number;
-  priceSource?: "tagger" | "yahoo";
+  priceSource?: PriceSource;
   priceUpdatedAt?: Date | null;
   allocationAssetClass: Record<string, number>;
   allocationRegions: Record<string, number>;
@@ -90,7 +92,7 @@ export async function addInstrument(input: {
 export async function updateInstrumentPrice(
   symbol: string,
   price: number,
-  source: "tagger" | "yahoo" = "yahoo",
+  source: PriceSource = "yahoo",
 ) {
   const [row] = await db
     .update(instruments)

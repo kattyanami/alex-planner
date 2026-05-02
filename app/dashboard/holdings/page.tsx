@@ -29,13 +29,25 @@ export default async function HoldingsPage() {
     .filter((d): d is Date => d != null)
     .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
 
-  const yahooCount = allInstruments.filter((i) => i.priceSource === "yahoo").length;
+  const counts = allInstruments.reduce(
+    (acc, i) => {
+      const k = (i.priceSource ?? "tagger") as "tagger" | "yahoo" | "polygon";
+      acc[k] = (acc[k] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<"tagger" | "yahoo" | "polygon", number>,
+  );
+
+  const sources: string[] = [];
+  if (counts.polygon) sources.push(`${counts.polygon} Polygon`);
+  if (counts.yahoo) sources.push(`${counts.yahoo} Yahoo`);
+  if (counts.tagger) sources.push(`${counts.tagger} Tagger (LLM)`);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Holdings"
-        description={`${allInstruments.length} instruments in catalog · ${yahooCount} priced via Yahoo Finance${lastRefresh ? ` · last refresh ${relTime(lastRefresh)}` : ""}`}
+        description={`${allInstruments.length} instruments in catalog · ${sources.join(" · ")}${lastRefresh ? ` · last refresh ${relTime(lastRefresh)}` : ""}`}
         action={<RefreshPricesButton />}
       />
       <PortfolioEditor accounts={accounts} instruments={instrumentOptions} />

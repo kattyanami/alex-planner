@@ -9,6 +9,7 @@ import {
   listAllInstruments,
   logActivity,
   updateInstrumentPrice,
+  type PriceSource,
 } from "@/lib/db/queries";
 import { fetchQuote, fetchQuotes } from "@/lib/finance/prices";
 
@@ -62,10 +63,9 @@ export async function addInstrumentAction(
       };
     }
 
-    // Fan out Tagger (allocations + LLM price guess) and Yahoo (real price)
-    // in parallel. Yahoo wins for price if it returns a real number; Tagger
-    // is the fallback (covers obscure symbols Yahoo doesn't have).
-    const [tagger, yahoo] = await Promise.all([
+    // Fan out Tagger (allocations + LLM price) and price provider (real
+    // price) in parallel. Provider chain: Polygon → Yahoo → Tagger fallback.
+    const [tagger, quote] = await Promise.all([
       classifyInstrument(
         symbol,
         hint?.name?.trim() || symbol,
@@ -75,13 +75,13 @@ export async function addInstrumentAction(
     ]);
 
     const { classification, tokensIn, tokensOut, ms } = tagger;
-    const realPrice = yahoo?.price ?? null;
+    const realPrice = quote?.price ?? null;
     const finalPrice = realPrice ?? classification.current_price;
-    const priceSource: "tagger" | "yahoo" = realPrice ? "yahoo" : "tagger";
+    const priceSource: PriceSource = quote?.provider ?? "tagger";
 
     const inserted = await addInstrument({
       symbol: classification.symbol.toUpperCase(),
-      name: yahoo?.longName || yahoo?.shortName || classification.name,
+      name: quote?.longName || quote?.shortName || classification.name,
       instrumentType: classification.instrument_type,
       currentPrice: finalPrice,
       priceSource,
@@ -138,6 +138,7 @@ export type RefreshPricesResult =
       total: number;
       ms: number;
       misses?: string[];
+      byProvider?: Record<string, number>;
     }
   | { error: string };
 
@@ -162,6 +163,7 @@ export async function refreshPricesAction(): Promise<RefreshPricesResult> {
 
     let updated = 0;
     const misses: string[] = [];
+    const byProvider: Record<string, number> = {};
     await Promise.all(
       all.map(async (inst) => {
         const q = quotes.get(inst.symbol);
@@ -169,7 +171,8 @@ export async function refreshPricesAction(): Promise<RefreshPricesResult> {
           misses.push(inst.symbol);
           return;
         }
-        await updateInstrumentPrice(inst.symbol, q.price, "yahoo");
+        await updateInstrumentPrice(inst.symbol, q.price, q.provider);
+        byProvider[q.provider] = (byProvider[q.provider] ?? 0) + 1;
         updated++;
       }),
     );
@@ -191,6 +194,7 @@ export async function refreshPricesAction(): Promise<RefreshPricesResult> {
       total: all.length,
       ms: Date.now() - start,
       misses: misses.length > 0 ? misses : undefined,
+      byProvider,
     };
   } catch (err) {
     return {

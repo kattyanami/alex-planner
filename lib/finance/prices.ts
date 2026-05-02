@@ -1,139 +1,79 @@
 /**
- * Yahoo Finance price fetcher.
+ * Price provider dispatcher.
  *
- * Free + unofficial — rate-limited to ~2k requests/hour by Yahoo. We bulk-fetch
- * + cache aggressively to stay well under that. Crypto needs a "-USD" suffix
- * (e.g. BTC → BTC-USD); BRK.B is BRK-B on Yahoo. We normalize before lookup.
+ * Tries Polygon.io first (when POLYGON_API_KEY is set) — official,
+ * higher-quality data. Falls back to Yahoo Finance (unofficial, free)
+ * for misses, crypto symbols Polygon doesn't have, or when the key is
+ * absent.
+ *
+ * For bulk refresh, tries Polygon's bulk snapshot (paid-tier endpoint),
+ * falls through to Yahoo if 401/403.
  */
-import yahooFinance from "yahoo-finance2";
+import {
+  fetchPolygonBulkSnapshot,
+  fetchPolygonQuote,
+  isPolygonConfigured,
+} from "./providers/polygon";
+import { fetchYahooQuote, fetchYahooQuotes } from "./providers/yahoo";
 
-// Crypto tickers that should auto-append -USD if not already present.
-const COMMON_CRYPTO = new Set([
-  "BTC",
-  "ETH",
-  "SOL",
-  "BNB",
-  "XRP",
-  "ADA",
-  "DOGE",
-  "DOT",
-  "MATIC",
-  "AVAX",
-  "LINK",
-  "UNI",
-  "LTC",
-  "ATOM",
-  "TRX",
-]);
+export type PriceProvider = "polygon" | "yahoo";
 
-export function normalizeSymbol(raw: string): string {
-  const s = raw.trim().toUpperCase();
-  // Berkshire-style: BRK.B → BRK-B on Yahoo
-  if (s.includes(".") && !s.includes("-USD")) {
-    // dotted multi-class shares like BRK.B / BF.B → use dash on Yahoo
-    return s.replace(".", "-");
-  }
-  // Bare crypto: BTC → BTC-USD
-  if (COMMON_CRYPTO.has(s)) return `${s}-USD`;
-  return s;
-}
-
-export type YahooQuote = {
+export type Quote = {
   symbol: string;
   price: number;
   currency: string | null;
   shortName: string | null;
   longName: string | null;
-  marketState: string | null;
+  provider: PriceProvider;
   fetchedAt: Date;
 };
 
 /**
- * Fetch a single quote. Returns null if the symbol is unknown / rate-limited.
+ * Fetch a single quote. Try Polygon first; fall back to Yahoo on miss.
  */
-export async function fetchQuote(rawSymbol: string): Promise<YahooQuote | null> {
-  const symbol = normalizeSymbol(rawSymbol);
-  try {
-    const raw = (await yahooFinance.quote(symbol)) as unknown;
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-    const q = raw as Record<string, unknown>;
-    const price =
-      (q.regularMarketPrice as number | undefined) ??
-      (q.postMarketPrice as number | undefined) ??
-      (q.preMarketPrice as number | undefined) ??
-      null;
-    if (price == null || price <= 0) return null;
-    return {
-      symbol: (q.symbol as string | undefined) ?? symbol,
-      price,
-      currency: (q.currency as string | undefined) ?? null,
-      shortName: (q.shortName as string | undefined) ?? null,
-      longName: (q.longName as string | undefined) ?? null,
-      marketState: (q.marketState as string | undefined) ?? null,
-      fetchedAt: new Date(),
-    };
-  } catch (err) {
-    // 404, network error, rate-limit — all bucketed as "no result"
-    console.warn(
-      `[yahoo] failed to fetch ${symbol}:`,
-      err instanceof Error ? err.message : err,
-    );
-    return null;
+export async function fetchQuote(rawSymbol: string): Promise<Quote | null> {
+  if (isPolygonConfigured()) {
+    const polygon = await fetchPolygonQuote(rawSymbol);
+    if (polygon) return polygon;
   }
+  return fetchYahooQuote(rawSymbol);
 }
 
 /**
- * Fetch many quotes in one batched call. Yahoo's quote endpoint accepts
- * comma-separated symbols up to ~50.
+ * Fetch many quotes. Strategy:
+ *  1. Try Polygon's bulk snapshot endpoint (paid; instant, all-at-once)
+ *  2. If 401/403/null (free tier), fall through to Yahoo (free, fast batch)
+ *  3. For symbols missed by Polygon (crypto, obscure), top up via Yahoo
  */
-export async function fetchQuotes(rawSymbols: string[]): Promise<Map<string, YahooQuote>> {
+export async function fetchQuotes(rawSymbols: string[]): Promise<Map<string, Quote>> {
   if (rawSymbols.length === 0) return new Map();
-  const normalized = rawSymbols.map((s) => ({ raw: s.trim().toUpperCase(), normalized: normalizeSymbol(s) }));
-  const out = new Map<string, YahooQuote>();
-  try {
-    // Chunk to be polite — 25 at a time.
-    const CHUNK = 25;
-    for (let i = 0; i < normalized.length; i += CHUNK) {
-      const chunk = normalized.slice(i, i + CHUNK);
-      const symbols = chunk.map((c) => c.normalized);
-      const res = (await yahooFinance.quote(symbols)) as unknown;
-      const arr = Array.isArray(res) ? res : [res];
-      for (let j = 0; j < arr.length; j++) {
-        const raw = arr[j];
-        const original = chunk[j]?.raw ?? "";
-        if (!raw || typeof raw !== "object") continue;
-        const q = raw as Record<string, unknown>;
-        const price =
-          (q.regularMarketPrice as number | undefined) ??
-          (q.postMarketPrice as number | undefined) ??
-          (q.preMarketPrice as number | undefined) ??
-          null;
-        if (price == null || price <= 0) continue;
-        out.set(original, {
-          symbol: (q.symbol as string | undefined) ?? chunk[j].normalized,
-          price,
-          currency: (q.currency as string | undefined) ?? null,
-          shortName: (q.shortName as string | undefined) ?? null,
-          longName: (q.longName as string | undefined) ?? null,
-          marketState: (q.marketState as string | undefined) ?? null,
-          fetchedAt: new Date(),
-        });
-      }
-    }
-  } catch (err) {
-    console.warn(
-      "[yahoo] batch fetch failed:",
-      err instanceof Error ? err.message : err,
-    );
+
+  let primary = new Map<string, Quote>();
+  if (isPolygonConfigured()) {
+    const snap = await fetchPolygonBulkSnapshot(rawSymbols);
+    if (snap) primary = snap;
   }
-  return out;
+
+  // Symbols still missing → ask Yahoo
+  const missing = rawSymbols.filter(
+    (s) => !primary.has(s.trim().toUpperCase()),
+  );
+  if (missing.length > 0) {
+    const yahoo = await fetchYahooQuotes(missing);
+    for (const [k, v] of yahoo) {
+      primary.set(k, v);
+    }
+  }
+
+  return primary;
 }
 
-/**
- * Stale check — used to decide whether to skip a refresh.
- */
 export function isPriceStale(updatedAt: Date | null | undefined, maxAgeMinutes = 15) {
   if (!updatedAt) return true;
   const ageMs = Date.now() - new Date(updatedAt).getTime();
   return ageMs > maxAgeMinutes * 60_000;
+}
+
+export function activeProvider(): PriceProvider | "yahoo-only" {
+  return isPolygonConfigured() ? "polygon" : "yahoo-only";
 }

@@ -20,10 +20,15 @@ export function RefreshPricesButton() {
         setMsg({ kind: "err", text: r.error });
         return;
       }
+      const breakdown = r.byProvider
+        ? Object.entries(r.byProvider)
+            .map(([p, n]) => `${n} via ${p}`)
+            .join(", ")
+        : "";
       const detail =
         r.missed > 0
-          ? `Updated ${r.updated} of ${r.total}. ${r.missed} not on Yahoo.`
-          : `Updated all ${r.updated} prices.`;
+          ? `Updated ${r.updated} of ${r.total}${breakdown ? ` (${breakdown})` : ""}. ${r.missed} unavailable.`
+          : `Updated all ${r.updated}${breakdown ? ` (${breakdown})` : ""}.`;
       setMsg({ kind: "ok", text: `${detail} (${(r.ms / 1000).toFixed(1)}s)` });
       // auto-clear in 8s
       setTimeout(() => setMsg(null), 8000);
