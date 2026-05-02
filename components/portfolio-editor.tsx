@@ -143,7 +143,7 @@ function AccountCard({
   const total = account.cashBalance + positionsValue;
 
   return (
-    <div className="rounded-xl border border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50/60 dark:bg-zinc-900/40 overflow-hidden">
+    <div className="rounded-xl border border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50/60 dark:bg-zinc-900/40">
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-zinc-200/60 dark:border-zinc-800/60">
         <div className="min-w-0">
           <div className="font-semibold flex items-center gap-2">
