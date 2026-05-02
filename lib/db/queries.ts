@@ -48,10 +48,14 @@ export async function addInstrument(input: {
   name: string;
   instrumentType: string;
   currentPrice: number;
+  priceSource?: "tagger" | "yahoo";
+  priceUpdatedAt?: Date | null;
   allocationAssetClass: Record<string, number>;
   allocationRegions: Record<string, number>;
   allocationSectors: Record<string, number>;
 }) {
+  const priceSource = input.priceSource ?? "tagger";
+  const priceUpdatedAt = input.priceUpdatedAt ?? new Date();
   const [row] = await db
     .insert(instruments)
     .values({
@@ -59,6 +63,8 @@ export async function addInstrument(input: {
       name: input.name,
       instrumentType: input.instrumentType,
       currentPrice: String(input.currentPrice),
+      priceSource,
+      priceUpdatedAt,
       allocationAssetClass: input.allocationAssetClass,
       allocationRegions: input.allocationRegions,
       allocationSectors: input.allocationSectors,
@@ -69,12 +75,32 @@ export async function addInstrument(input: {
         name: input.name,
         instrumentType: input.instrumentType,
         currentPrice: String(input.currentPrice),
+        priceSource,
+        priceUpdatedAt,
         allocationAssetClass: input.allocationAssetClass,
         allocationRegions: input.allocationRegions,
         allocationSectors: input.allocationSectors,
         updatedAt: new Date(),
       },
     })
+    .returning();
+  return row;
+}
+
+export async function updateInstrumentPrice(
+  symbol: string,
+  price: number,
+  source: "tagger" | "yahoo" = "yahoo",
+) {
+  const [row] = await db
+    .update(instruments)
+    .set({
+      currentPrice: String(price),
+      priceSource: source,
+      priceUpdatedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(instruments.symbol, symbol))
     .returning();
   return row;
 }

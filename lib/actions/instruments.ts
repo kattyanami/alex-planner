@@ -6,8 +6,11 @@ import { classifyInstrument } from "@/lib/agents/tagger";
 import {
   addInstrument,
   getInstrumentBySymbol,
+  listAllInstruments,
   logActivity,
+  updateInstrumentPrice,
 } from "@/lib/db/queries";
+import { fetchQuote, fetchQuotes } from "@/lib/finance/prices";
 
 export type AddInstrumentResult =
   | {
@@ -59,18 +62,30 @@ export async function addInstrumentAction(
       };
     }
 
-    // Fan out to Tagger — it returns name, type, price, all allocations.
-    const { classification, tokensIn, tokensOut, ms } = await classifyInstrument(
-      symbol,
-      hint?.name?.trim() || symbol,
-      hint?.type ?? "etf",
-    );
+    // Fan out Tagger (allocations + LLM price guess) and Yahoo (real price)
+    // in parallel. Yahoo wins for price if it returns a real number; Tagger
+    // is the fallback (covers obscure symbols Yahoo doesn't have).
+    const [tagger, yahoo] = await Promise.all([
+      classifyInstrument(
+        symbol,
+        hint?.name?.trim() || symbol,
+        hint?.type ?? "etf",
+      ),
+      fetchQuote(symbol),
+    ]);
+
+    const { classification, tokensIn, tokensOut, ms } = tagger;
+    const realPrice = yahoo?.price ?? null;
+    const finalPrice = realPrice ?? classification.current_price;
+    const priceSource: "tagger" | "yahoo" = realPrice ? "yahoo" : "tagger";
 
     const inserted = await addInstrument({
       symbol: classification.symbol.toUpperCase(),
-      name: classification.name,
+      name: yahoo?.longName || yahoo?.shortName || classification.name,
       instrumentType: classification.instrument_type,
-      currentPrice: classification.current_price,
+      currentPrice: finalPrice,
+      priceSource,
+      priceUpdatedAt: new Date(),
       allocationAssetClass: classification.allocation_asset_class,
       allocationRegions: classification.allocation_regions,
       allocationSectors: classification.allocation_sectors,
@@ -84,6 +99,7 @@ export async function addInstrumentAction(
         kind: "instrument_classified",
         symbol: inserted.symbol,
         type: inserted.instrumentType,
+        priceSource,
         tokens: { in: tokensIn, out: tokensOut },
         ms,
       },
@@ -110,6 +126,75 @@ export async function addInstrumentAction(
         err instanceof Error
           ? `Tagger failed: ${err.message}`
           : "Unknown error during classification",
+    };
+  }
+}
+
+export type RefreshPricesResult =
+  | {
+      ok: true;
+      updated: number;
+      missed: number;
+      total: number;
+      ms: number;
+      misses?: string[];
+    }
+  | { error: string };
+
+/**
+ * Re-fetch every catalog instrument's price from Yahoo Finance and update
+ * the row. Skips instruments where Yahoo has no quote (keeps the existing
+ * Tagger price). Cheap: one batched call to yahoo-finance2 per ~25 symbols.
+ */
+export async function refreshPricesAction(): Promise<RefreshPricesResult> {
+  try {
+    const { userId } = await auth();
+    if (!userId) return { error: "Not authenticated" };
+
+    const start = Date.now();
+    const all = await listAllInstruments();
+    if (all.length === 0) {
+      return { ok: true, updated: 0, missed: 0, total: 0, ms: 0 };
+    }
+
+    const symbols = all.map((i) => i.symbol);
+    const quotes = await fetchQuotes(symbols);
+
+    let updated = 0;
+    const misses: string[] = [];
+    await Promise.all(
+      all.map(async (inst) => {
+        const q = quotes.get(inst.symbol);
+        if (!q) {
+          misses.push(inst.symbol);
+          return;
+        }
+        await updateInstrumentPrice(inst.symbol, q.price, "yahoo");
+        updated++;
+      }),
+    );
+
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/holdings");
+
+    await logActivity(
+      userId,
+      "profile_saved", // closest existing kind; could add a new one later
+      `Refreshed ${updated} prices from Yahoo Finance${misses.length ? ` (${misses.length} unavailable)` : ""}`,
+      { kind: "prices_refreshed", updated, missed: misses.length, misses },
+    );
+
+    return {
+      ok: true,
+      updated,
+      missed: misses.length,
+      total: all.length,
+      ms: Date.now() - start,
+      misses: misses.length > 0 ? misses : undefined,
+    };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Refresh failed",
     };
   }
 }

@@ -41,6 +41,8 @@ export const instruments = pgTable("instruments", {
   name: varchar("name", { length: 255 }).notNull(),
   instrumentType: varchar("instrument_type", { length: 50 }),
   currentPrice: decimal("current_price", { precision: 12, scale: 4 }),
+  priceSource: varchar("price_source", { length: 20 }).default("tagger"),
+  priceUpdatedAt: timestamp("price_updated_at"),
   allocationRegions: jsonb("allocation_regions").default(sql`'{}'::jsonb`),
   allocationSectors: jsonb("allocation_sectors").default(sql`'{}'::jsonb`),
   allocationAssetClass: jsonb("allocation_asset_class").default(
