@@ -6,12 +6,17 @@ import type React from "react";
  */
 export function Card({
   className = "",
+  interactive = false,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+}: React.HTMLAttributes<HTMLDivElement> & { interactive?: boolean }) {
   return (
     <div
       {...props}
-      className={`rounded-xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-950/50 shadow-sm ${className}`}
+      className={`rounded-xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-950/50 shadow-sm transition ${
+        interactive
+          ? "hover:border-emerald-500/40 hover:shadow-md hover:-translate-y-px"
+          : ""
+      } ${className}`}
     />
   );
 }
@@ -74,14 +79,16 @@ export function KPITile({
 }) {
   const toneCls =
     tone === "success"
-      ? "from-emerald-500/10 to-transparent border-emerald-500/20"
+      ? "from-emerald-500/15 via-emerald-500/5 to-transparent border-emerald-500/30 dark:border-emerald-500/30"
       : tone === "warning"
-        ? "from-amber-500/10 to-transparent border-amber-500/20"
+        ? "from-amber-500/20 via-amber-500/8 to-transparent border-amber-500/40 dark:border-amber-500/40"
         : tone === "danger"
-          ? "from-red-500/10 to-transparent border-red-500/20"
+          ? "from-red-500/20 via-red-500/8 to-transparent border-red-500/40 dark:border-red-500/40"
           : "from-zinc-500/5 to-transparent border-zinc-200/80 dark:border-zinc-800/80";
   return (
-    <div className={`relative rounded-xl border bg-gradient-to-br p-4 ${toneCls}`}>
+    <div
+      className={`relative rounded-xl border bg-gradient-to-br p-4 transition hover:-translate-y-px hover:shadow-md ${toneCls}`}
+    >
       {icon && (
         <div className="absolute top-3 right-3 text-zinc-400 dark:text-zinc-600">
           {icon}

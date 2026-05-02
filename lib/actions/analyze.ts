@@ -1,11 +1,18 @@
 "use server";
 
 import { auth } from "@clerk/nextjs/server";
+import { revalidatePath } from "next/cache";
 import { classifyInstrument } from "@/lib/agents/tagger";
 import { generateReport } from "@/lib/agents/reporter";
 import { generateCharts } from "@/lib/agents/charter";
 import { analyzeRetirement } from "@/lib/agents/retirement";
-import { getUserPortfolio, getUserProfile } from "@/lib/db/queries";
+import {
+  getUserPortfolio,
+  getUserProfile,
+  logActivity,
+  saveAnalysisSnapshot,
+  type AnalysisSnapshot,
+} from "@/lib/db/queries";
 
 async function requireAuth() {
   const { userId } = await auth();
@@ -108,6 +115,23 @@ export async function runRetirementAgent(): Promise<RetirementActionResult> {
       annualContribution: profile?.annual_contribution ?? undefined,
     });
     return { ok: true, result };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
+  }
+}
+
+export async function saveAnalysisAction(snapshot: AnalysisSnapshot) {
+  try {
+    const userId = await requireAuth();
+    await saveAnalysisSnapshot(userId, snapshot);
+    await logActivity(
+      userId,
+      "analysis_completed",
+      `Analysis run · ${snapshot.successRate ?? 0}% success rate`,
+      { successRate: snapshot.successRate, totalValue: snapshot.totalValue },
+    );
+    revalidatePath("/dashboard");
+    return { ok: true } as const;
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unknown error" };
   }

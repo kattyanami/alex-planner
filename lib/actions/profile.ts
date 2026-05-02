@@ -2,7 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
-import { updateUserProfile } from "@/lib/db/queries";
+import { logActivity, updateUserProfile } from "@/lib/db/queries";
 
 export async function updateProfileAction(formData: FormData) {
   try {
@@ -31,6 +31,12 @@ export async function updateProfileAction(formData: FormData) {
       return { error: "Annual contribution must be ≥ 0" };
 
     await updateUserProfile(userId, {
+      yearsUntilRetirement,
+      targetRetirementIncome,
+      currentAge,
+      annualContribution,
+    });
+    await logActivity(userId, "profile_saved", "Updated retirement profile", {
       yearsUntilRetirement,
       targetRetirementIncome,
       currentAge,

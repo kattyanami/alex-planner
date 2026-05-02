@@ -15,6 +15,13 @@
       "when": 1777663227505,
       "tag": "0001_free_zeigeist",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777711158469,
+      "tag": "0002_aromatic_sentinel",
+      "breakpoints": true
     }
   ]
 }

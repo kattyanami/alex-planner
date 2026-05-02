@@ -1,7 +1,10 @@
 import { generateObject } from "ai";
 import { z } from "zod";
 import { MODELS } from "@/lib/ai/models";
+import { aggregatePortfolio } from "@/lib/finance/aggregate";
 import type { Portfolio } from "./reporter";
+
+export { aggregatePortfolio };
 
 export const ChartSchema = z.object({
   key: z.string().describe("Stable identifier, e.g. asset_class_distribution"),
@@ -22,43 +25,6 @@ export const ChartsResponseSchema = z.object({
 });
 
 export type ChartsResponse = z.infer<typeof ChartsResponseSchema>;
-
-export function aggregatePortfolio(portfolio: Portfolio) {
-  let totalValue = 0;
-  const positionValues: Record<string, number> = {};
-  const accountTotals: Record<string, { value: number; positions: number }> = {};
-  const assetClasses: Record<string, number> = {};
-  const regions: Record<string, number> = {};
-  const sectors: Record<string, number> = {};
-
-  for (const account of portfolio.accounts) {
-    const cash = Number(account.cash_balance) || 0;
-    accountTotals[account.name] = { value: cash, positions: account.positions.length };
-    totalValue += cash;
-    if (cash > 0) assetClasses.cash = (assetClasses.cash ?? 0) + cash;
-
-    for (const pos of account.positions) {
-      const price = Number(pos.instrument.current_price) || 0;
-      const qty = Number(pos.quantity) || 0;
-      const value = price * qty;
-      positionValues[pos.symbol] = (positionValues[pos.symbol] ?? 0) + value;
-      accountTotals[account.name].value += value;
-      totalValue += value;
-
-      for (const [k, v] of Object.entries(pos.instrument.allocation_asset_class ?? {})) {
-        assetClasses[k] = (assetClasses[k] ?? 0) + value * (Number(v) / 100);
-      }
-      for (const [k, v] of Object.entries(pos.instrument.allocation_regions ?? {})) {
-        regions[k] = (regions[k] ?? 0) + value * (Number(v) / 100);
-      }
-      for (const [k, v] of Object.entries(pos.instrument.allocation_sectors ?? {})) {
-        sectors[k] = (sectors[k] ?? 0) + value * (Number(v) / 100);
-      }
-    }
-  }
-
-  return { totalValue, positionValues, accountTotals, assetClasses, regions, sectors };
-}
 
 function aggregatesAsMarkdown(p: Portfolio) {
   const a = aggregatePortfolio(p);

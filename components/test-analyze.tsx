@@ -17,6 +17,7 @@ import {
   runReporterAgent,
   runRetirementAgent,
   runTaggerAgent,
+  saveAnalysisAction,
   type CharterActionResult,
   type ReporterActionResult,
   type RetirementActionResult,
@@ -68,22 +69,63 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
     setCharter({ status: "running", startedAt: now });
     setRetirement({ status: "running", startedAt: now });
 
-    void runTaggerAgent().then((r) => {
-      if ("error" in r) setTagger({ status: "error", error: r.error, finishedAt: Date.now() });
-      else setTagger({ status: "done", data: r, finishedAt: Date.now() });
+    const tag = runTaggerAgent().then((r) => {
+      if ("error" in r) {
+        setTagger({ status: "error", error: r.error, finishedAt: Date.now() });
+        return null;
+      }
+      setTagger({ status: "done", data: r, finishedAt: Date.now() });
+      return r;
     });
-    void runReporterAgent().then((r) => {
-      if ("error" in r) setReporter({ status: "error", error: r.error, finishedAt: Date.now() });
-      else setReporter({ status: "done", data: r.result, finishedAt: Date.now() });
+    const rep = runReporterAgent().then((r) => {
+      if ("error" in r) {
+        setReporter({ status: "error", error: r.error, finishedAt: Date.now() });
+        return null;
+      }
+      setReporter({ status: "done", data: r.result, finishedAt: Date.now() });
+      return r.result;
     });
-    void runCharterAgent().then((r) => {
-      if ("error" in r) setCharter({ status: "error", error: r.error, finishedAt: Date.now() });
-      else setCharter({ status: "done", data: r.result, finishedAt: Date.now() });
+    const cha = runCharterAgent().then((r) => {
+      if ("error" in r) {
+        setCharter({ status: "error", error: r.error, finishedAt: Date.now() });
+        return null;
+      }
+      setCharter({ status: "done", data: r.result, finishedAt: Date.now() });
+      return r.result;
     });
-    void runRetirementAgent().then((r) => {
-      if ("error" in r) setRetirement({ status: "error", error: r.error, finishedAt: Date.now() });
-      else setRetirement({ status: "done", data: r.result, finishedAt: Date.now() });
+    const ret = runRetirementAgent().then((r) => {
+      if ("error" in r) {
+        setRetirement({ status: "error", error: r.error, finishedAt: Date.now() });
+        return null;
+      }
+      setRetirement({ status: "done", data: r.result, finishedAt: Date.now() });
+      return r.result;
     });
+
+    const [tagR, repR, chaR, retR] = await Promise.all([tag, rep, cha, ret]);
+    if (tagR && repR && chaR && retR) {
+      const tIn =
+        tagR.results.reduce((s, t) => s + t.tokensIn, 0) +
+        repR.tokensIn + chaR.tokensIn + retR.tokensIn;
+      const tOut =
+        tagR.results.reduce((s, t) => s + t.tokensOut, 0) +
+        repR.tokensOut + chaR.tokensOut + retR.tokensOut;
+      void saveAnalysisAction({
+        reportMarkdown: repR.markdown,
+        retirementMarkdown: retR.markdown,
+        successRate: retR.metrics.monteCarlo.success_rate,
+        expectedAtRetirement: retR.metrics.monteCarlo.expected_at_retirement,
+        totalValue: retR.metrics.portfolioValue,
+        charts: chaR.charts,
+        durations: {
+          tagger: Math.max(...tagR.results.map((t) => t.ms)),
+          reporter: repR.ms,
+          charter: chaR.ms,
+          retirement: retR.ms,
+        },
+        tokens: { in: tIn, out: tOut },
+      });
+    }
   }
 
   function reset() {

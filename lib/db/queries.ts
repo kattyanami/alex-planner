@@ -1,6 +1,15 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "./index";
-import { accounts, instruments, positions, users } from "./schema";
+import {
+  accounts,
+  activityEvents,
+  instruments,
+  jobs,
+  positions,
+  users,
+  type ActivityEvent,
+  type Job,
+} from "./schema";
 import type { Portfolio, UserProfile } from "@/lib/agents/reporter";
 
 export async function ensureUser(clerkUserId: string, displayName?: string) {
@@ -314,4 +323,100 @@ export async function seedSamplePortfolioForUser(clerkUserId: string) {
 export async function clearUserPortfolio(clerkUserId: string) {
   // Cascades delete positions
   await db.delete(accounts).where(eq(accounts.clerkUserId, clerkUserId));
+}
+
+// ---- Activity log ----------------------------------------------------------
+
+export type ActivityKind =
+  | "account_added"
+  | "account_removed"
+  | "position_added"
+  | "position_removed"
+  | "profile_saved"
+  | "sample_loaded"
+  | "portfolio_cleared"
+  | "analysis_completed";
+
+export async function logActivity(
+  clerkUserId: string,
+  kind: ActivityKind,
+  description: string,
+  metadata?: Record<string, unknown>,
+) {
+  await db.insert(activityEvents).values({
+    clerkUserId,
+    kind,
+    description,
+    metadata: metadata ?? null,
+  });
+}
+
+export async function listRecentActivity(
+  clerkUserId: string,
+  limit = 8,
+): Promise<ActivityEvent[]> {
+  return db
+    .select()
+    .from(activityEvents)
+    .where(eq(activityEvents.clerkUserId, clerkUserId))
+    .orderBy(desc(activityEvents.createdAt))
+    .limit(limit);
+}
+
+// ---- Analysis snapshots (jobs table) ---------------------------------------
+
+export type AnalysisSnapshot = {
+  reportMarkdown?: string;
+  retirementMarkdown?: string;
+  successRate?: number;
+  expectedAtRetirement?: number;
+  totalValue?: number;
+  charts?: unknown;
+  durations?: { tagger: number; reporter: number; charter: number; retirement: number };
+  tokens?: { in: number; out: number };
+};
+
+export async function saveAnalysisSnapshot(
+  clerkUserId: string,
+  snapshot: AnalysisSnapshot,
+) {
+  const now = new Date();
+  await db.insert(jobs).values({
+    clerkUserId,
+    jobType: "analysis",
+    status: "completed",
+    requestPayload: { totalValue: snapshot.totalValue },
+    reportPayload: snapshot.reportMarkdown ? { markdown: snapshot.reportMarkdown } : null,
+    chartsPayload: snapshot.charts ? snapshot.charts : null,
+    retirementPayload: snapshot.retirementMarkdown
+      ? {
+          markdown: snapshot.retirementMarkdown,
+          successRate: snapshot.successRate,
+          expectedAtRetirement: snapshot.expectedAtRetirement,
+        }
+      : null,
+    summaryPayload: {
+      durations: snapshot.durations,
+      tokens: snapshot.tokens,
+      successRate: snapshot.successRate,
+    },
+    startedAt: now,
+    completedAt: now,
+  });
+}
+
+export async function getLastAnalysis(clerkUserId: string): Promise<Job | null> {
+  const [j] = await db
+    .select()
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.clerkUserId, clerkUserId),
+        eq(jobs.jobType, "analysis"),
+        eq(jobs.status, "completed"),
+      ),
+    )
+    .orderBy(desc(jobs.completedAt))
+    .limit(1);
+  return j ?? null;
 }

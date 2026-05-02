@@ -5,17 +5,37 @@ import {
   Activity,
   ArrowRight,
   Coins,
+  History,
   PiggyBank,
   Sparkles,
   Target,
   Wallet,
 } from "lucide-react";
 import {
+  getLastAnalysis,
   getUserAccountsDetailed,
+  getUserPortfolio,
   getUserProfile,
+  listRecentActivity,
 } from "@/lib/db/queries";
+import {
+  buildAssetClassChartData,
+  buildTopHoldingsChartData,
+} from "@/lib/finance/aggregate";
 import { PageHeader } from "@/components/dashboard-shell";
-import { Badge, Button, Card, CardBody, CardHeader, EmptyState, KPITile } from "@/components/ui/primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  EmptyState,
+  KPITile,
+} from "@/components/ui/primitives";
+import { ActivityFeed } from "@/components/activity-feed";
+import { AllocationDonut, AllocationLegend } from "@/components/charts/allocation-donut";
+import { HoldingsStrip } from "@/components/holdings-strip";
+import { LastAnalysisCard } from "@/components/last-analysis";
 import { fmtUsd } from "@/lib/format";
 import { LIFE_DEFAULTS } from "@/lib/finance/assumptions";
 
@@ -23,14 +43,16 @@ export default async function OverviewPage() {
   const { userId } = await auth();
   if (!userId) redirect("/sign-in");
 
-  const [profile, accounts] = await Promise.all([
+  const [profile, accounts, portfolio, lastJob, activity] = await Promise.all([
     getUserProfile(userId),
     getUserAccountsDetailed(userId),
+    getUserPortfolio(userId),
+    getLastAnalysis(userId),
+    listRecentActivity(userId, 8),
   ]);
 
   const positionsValue = accounts.reduce(
-    (s, a) =>
-      s + a.positions.reduce((ps, p) => ps + p.quantity * (p.currentPrice ?? 0), 0),
+    (s, a) => s + a.positions.reduce((ps, p) => ps + p.quantity * (p.currentPrice ?? 0), 0),
     0,
   );
   const cashValue = accounts.reduce((s, a) => s + a.cashBalance, 0);
@@ -41,7 +63,13 @@ export default async function OverviewPage() {
   const yearsToRetirement = profile?.years_until_retirement ?? LIFE_DEFAULTS.yearsUntilRetirement;
   const targetIncome = profile?.target_retirement_income ?? LIFE_DEFAULTS.targetRetirementIncome;
   const safeWithdrawal = totalValue * 0.04;
-  const gap = targetIncome - safeWithdrawal;
+  const gap = Math.max(0, targetIncome - safeWithdrawal);
+  const gapRatio = targetIncome > 0 ? gap / targetIncome : 0;
+
+  const allocationSlices = buildAssetClassChartData(portfolio);
+  const topHoldings = buildTopHoldingsChartData(portfolio, 5);
+
+  const gapTone = gap === 0 ? "success" : gapRatio > 0.5 ? "danger" : gapRatio > 0.2 ? "warning" : "default";
 
   return (
     <div className="space-y-6">
@@ -67,6 +95,46 @@ export default async function OverviewPage() {
         }
       />
 
+      {/* HERO: donut + KPI strip */}
+      <Card>
+        <CardBody className="grid gap-6 md:grid-cols-[auto_1fr] md:items-center">
+          <div className="flex justify-center md:justify-start">
+            <AllocationDonut slices={allocationSlices} total={totalValue} size={220} />
+          </div>
+          <div className="space-y-4">
+            <div className="flex items-baseline justify-between gap-3 flex-wrap">
+              <div>
+                <div className="text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-medium">
+                  Asset allocation
+                </div>
+                <div className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  {accounts.length} {accounts.length === 1 ? "account" : "accounts"} · {positionsCount}{" "}
+                  {positionsCount === 1 ? "holding" : "holdings"}
+                </div>
+              </div>
+              {hasPortfolio ? (
+                <Badge tone="success">
+                  <Activity className="size-3" />
+                  Ready for analysis
+                </Badge>
+              ) : (
+                <Badge tone="warning">
+                  <Activity className="size-3" />
+                  Add holdings first
+                </Badge>
+              )}
+            </div>
+            {allocationSlices.length > 0 ? (
+              <AllocationLegend slices={allocationSlices} total={totalValue} />
+            ) : (
+              <div className="text-sm text-zinc-500 italic">
+                Add holdings to see your allocation breakdown.
+              </div>
+            )}
+          </div>
+        </CardBody>
+      </Card>
+
       {/* KPI strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KPITile
@@ -74,12 +142,15 @@ export default async function OverviewPage() {
           value={fmtUsd(totalValue, { compact: totalValue >= 100_000 })}
           hint={`${accounts.length} ${accounts.length === 1 ? "account" : "accounts"} · ${positionsCount} ${positionsCount === 1 ? "holding" : "holdings"}`}
           icon={<Wallet className="size-4" />}
-          tone={hasPortfolio ? "default" : "default"}
         />
         <KPITile
           label="Years to Retirement"
           value={yearsToRetirement}
-          hint={profile?.current_age ? `Age ${profile.current_age} → ${profile.current_age + yearsToRetirement}` : "Set your age in settings"}
+          hint={
+            profile?.current_age
+              ? `Age ${profile.current_age} → ${profile.current_age + yearsToRetirement}`
+              : "Set your age in settings"
+          }
           icon={<Target className="size-4" />}
         />
         <KPITile
@@ -91,14 +162,18 @@ export default async function OverviewPage() {
         <KPITile
           label="Income Gap"
           value={gap > 0 ? fmtUsd(gap, { compact: true }) : "On track"}
-          hint={gap > 0 ? "vs current 4% rule" : "current portfolio supports target"}
+          hint={
+            gap > 0
+              ? `${(gapRatio * 100).toFixed(0)}% of target unfunded`
+              : "Current portfolio supports target"
+          }
           icon={<PiggyBank className="size-4" />}
-          tone={gap > targetIncome * 0.5 ? "warning" : gap > 0 ? "default" : "success"}
+          tone={gapTone}
         />
       </div>
 
+      {/* Accounts + Last Analysis */}
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Accounts summary */}
         <Card className="lg:col-span-2">
           <CardHeader
             icon={<Wallet className="size-4" />}
@@ -127,35 +202,59 @@ export default async function OverviewPage() {
                 }
               />
             ) : (
-              <div className="divide-y divide-zinc-200/60 dark:divide-zinc-800/60 -my-2">
-                {accounts.map((a) => {
-                  const pv = a.positions.reduce((s, p) => s + p.quantity * (p.currentPrice ?? 0), 0);
-                  const at = a.cashBalance + pv;
-                  const pct = totalValue ? (at / totalValue) * 100 : 0;
-                  return (
-                    <div key={a.id} className="py-3 flex items-center gap-4">
-                      <div className="size-9 grid place-items-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0">
-                        <Wallet className="size-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium truncate">{a.name}</div>
-                        <div className="text-xs text-zinc-500 dark:text-zinc-400 tabular-nums">
-                          {a.positions.length} holdings · {fmtUsd(a.cashBalance)} cash
+              <div className="space-y-5">
+                <div className="divide-y divide-zinc-200/60 dark:divide-zinc-800/60 -my-2">
+                  {accounts.map((a) => {
+                    const pv = a.positions.reduce((s, p) => s + p.quantity * (p.currentPrice ?? 0), 0);
+                    const at = a.cashBalance + pv;
+                    const pct = totalValue ? (at / totalValue) * 100 : 0;
+                    return (
+                      <div key={a.id} className="py-3 flex items-center gap-4">
+                        <div className="size-9 grid place-items-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0">
+                          <Wallet className="size-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium truncate">{a.name}</div>
+                          <div className="text-xs text-zinc-500 dark:text-zinc-400 tabular-nums">
+                            {a.positions.length} {a.positions.length === 1 ? "holding" : "holdings"} · {fmtUsd(a.cashBalance)} cash
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="font-semibold tabular-nums">{fmtUsd(at)}</div>
+                          <div className="text-xs text-zinc-500 tabular-nums">{pct.toFixed(0)}%</div>
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <div className="font-semibold tabular-nums">{fmtUsd(at)}</div>
-                        <div className="text-xs text-zinc-500 tabular-nums">{pct.toFixed(0)}%</div>
-                      </div>
+                    );
+                  })}
+                </div>
+
+                {topHoldings.length > 0 && (
+                  <div className="pt-4 border-t border-zinc-200/60 dark:border-zinc-800/60">
+                    <div className="text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-medium mb-3">
+                      Top holdings
                     </div>
-                  );
-                })}
+                    <HoldingsStrip holdings={topHoldings} total={totalValue} />
+                  </div>
+                )}
               </div>
             )}
           </CardBody>
         </Card>
 
-        {/* Profile summary */}
+        <Card>
+          <CardHeader
+            icon={<Sparkles className="size-4" />}
+            title="Last analysis"
+            description="Most recent multi-agent run"
+          />
+          <CardBody>
+            <LastAnalysisCard job={lastJob} />
+          </CardBody>
+        </Card>
+      </div>
+
+      {/* Profile + Activity */}
+      <div className="grid gap-6 lg:grid-cols-3">
         <Card>
           <CardHeader
             icon={<Target className="size-4" />}
@@ -171,21 +270,25 @@ export default async function OverviewPage() {
           <CardBody className="space-y-3">
             <Row label="Current age" value={profile?.current_age ?? "—"} />
             <Row label="Years to retirement" value={profile?.years_until_retirement ?? "—"} />
-            <Row label="Target income" value={profile?.target_retirement_income ? fmtUsd(profile.target_retirement_income) : "—"} />
-            <Row label="Annual contribution" value={profile?.annual_contribution ? fmtUsd(profile.annual_contribution) : "—"} />
-            <div className="pt-3 border-t border-zinc-200/60 dark:border-zinc-800/60">
-              {hasPortfolio ? (
-                <Badge tone="success">
-                  <Activity className="size-3" />
-                  Ready for analysis
-                </Badge>
-              ) : (
-                <Badge tone="warning">
-                  <Activity className="size-3" />
-                  Add holdings first
-                </Badge>
-              )}
-            </div>
+            <Row
+              label="Target income"
+              value={profile?.target_retirement_income ? fmtUsd(profile.target_retirement_income) : "—"}
+            />
+            <Row
+              label="Annual contribution"
+              value={profile?.annual_contribution ? fmtUsd(profile.annual_contribution) : "—"}
+            />
+          </CardBody>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader
+            icon={<History className="size-4" />}
+            title="Recent activity"
+            description="What's changed in your portfolio lately"
+          />
+          <CardBody>
+            <ActivityFeed events={activity} />
           </CardBody>
         </Card>
       </div>

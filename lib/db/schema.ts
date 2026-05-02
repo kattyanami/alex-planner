@@ -129,3 +129,21 @@ export type Position = typeof positions.$inferSelect;
 export type NewPosition = typeof positions.$inferInsert;
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
+
+export const activityEvents = pgTable(
+  "activity_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clerkUserId: varchar("clerk_user_id", { length: 255 })
+      .references(() => users.clerkUserId, { onDelete: "cascade" })
+      .notNull(),
+    kind: varchar("kind", { length: 50 }).notNull(),
+    description: text("description").notNull(),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (t) => [index("idx_activity_user_created").on(t.clerkUserId, t.createdAt)],
+);
+
+export type ActivityEvent = typeof activityEvents.$inferSelect;
+export type NewActivityEvent = typeof activityEvents.$inferInsert;
