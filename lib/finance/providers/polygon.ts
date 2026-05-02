@@ -29,7 +29,10 @@ export function normalizeForPolygon(raw: string): string {
   return s;
 }
 
-const BASE = "https://api.polygon.io";
+// Polygon rebranded to Massive in 2025. Both api.polygon.io and api.massive.com
+// currently resolve to the same backend. Override via POLYGON_API_BASE if/when
+// the old domain is sunset.
+const BASE = process.env.POLYGON_API_BASE ?? "https://api.polygon.io";
 
 function apiKey(): string | null {
   return process.env.POLYGON_API_KEY ?? null;
