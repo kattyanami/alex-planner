@@ -2,9 +2,14 @@
  * Yahoo Finance adapter — unofficial, free, rate-limited.
  * Used as the fallback when Polygon is unavailable or for bulk refreshes
  * on the free Polygon tier (which is too rate-limited for 24+ instruments).
+ *
+ * yahoo-finance2 v3 changed the API from a default singleton to an instance
+ * constructor. We instantiate once at module load.
  */
-import yahooFinance from "yahoo-finance2";
+import YahooFinance from "yahoo-finance2";
 import type { Quote } from "../prices";
+
+const yahooFinance = new YahooFinance();
 
 // Crypto tickers that should auto-append -USD if not already present.
 const COMMON_CRYPTO = new Set([
