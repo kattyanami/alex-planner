@@ -62,7 +62,7 @@ export function CardBody({
 }
 
 /**
- * KPI tile — large number with label and optional trend / sub-text.
+ * KPI tile — large number with label, optional trend / sub-text / sparkline.
  */
 export function KPITile({
   label,
@@ -70,12 +70,16 @@ export function KPITile({
   hint,
   icon,
   tone = "default",
+  trendPct,
+  sparkline,
 }: {
   label: string;
   value: React.ReactNode;
   hint?: React.ReactNode;
   icon?: React.ReactNode;
   tone?: "default" | "success" | "warning" | "danger";
+  trendPct?: number;
+  sparkline?: React.ReactNode;
 }) {
   const toneCls =
     tone === "success"
@@ -85,12 +89,20 @@ export function KPITile({
         : tone === "danger"
           ? "from-red-500/20 via-red-500/8 to-transparent border-red-500/40 dark:border-red-500/40"
           : "from-zinc-500/5 to-transparent border-zinc-200/80 dark:border-zinc-800/80";
+
+  const trendCls =
+    trendPct == null
+      ? ""
+      : trendPct >= 0
+        ? "text-emerald-600 dark:text-emerald-400"
+        : "text-red-600 dark:text-red-400";
+
   return (
     <div
-      className={`relative rounded-xl border bg-gradient-to-br p-4 transition hover:-translate-y-px hover:shadow-md ${toneCls}`}
+      className={`relative rounded-xl border bg-gradient-to-br p-4 transition hover:-translate-y-px hover:shadow-md overflow-hidden ${toneCls}`}
     >
       {icon && (
-        <div className="absolute top-3 right-3 text-zinc-400 dark:text-zinc-600">
+        <div className="absolute top-3 right-3 text-zinc-400 dark:text-zinc-600 z-10">
           {icon}
         </div>
       )}
@@ -100,9 +112,19 @@ export function KPITile({
       <div className="mt-1 text-2xl font-semibold tabular-nums tracking-tight">
         {value}
       </div>
-      {hint && (
-        <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 tabular-nums">
-          {hint}
+      <div className="mt-1 flex items-center gap-2 text-xs tabular-nums">
+        {trendPct != null && (
+          <span className={`inline-flex items-center gap-0.5 font-medium ${trendCls}`}>
+            {trendPct >= 0 ? "↑" : "↓"} {Math.abs(trendPct).toFixed(1)}%
+          </span>
+        )}
+        {hint && (
+          <span className="text-zinc-500 dark:text-zinc-400 truncate">{hint}</span>
+        )}
+      </div>
+      {sparkline && (
+        <div className="absolute bottom-2 right-2 opacity-80 pointer-events-none">
+          {sparkline}
         </div>
       )}
     </div>

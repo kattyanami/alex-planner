@@ -32,6 +32,8 @@ import {
   EmptyState,
   KPITile,
 } from "@/components/ui/primitives";
+import { FadeIn } from "@/components/ui/animations";
+import { Sparkline, syntheticSeries } from "@/components/ui/sparkline";
 import { ActivityFeed } from "@/components/activity-feed";
 import { AllocationDonut, AllocationLegend } from "@/components/charts/allocation-donut";
 import { HoldingsStrip } from "@/components/holdings-strip";
@@ -96,6 +98,7 @@ export default async function OverviewPage() {
       />
 
       {/* HERO: donut + KPI strip */}
+      <FadeIn>
       <Card>
         <CardBody className="grid gap-6 md:grid-cols-[auto_1fr] md:items-center">
           <div className="flex justify-center md:justify-start">
@@ -134,42 +137,73 @@ export default async function OverviewPage() {
           </div>
         </CardBody>
       </Card>
+      </FadeIn>
 
-      {/* KPI strip */}
+      {/* KPI strip — sparklines synthetic for now (will be real once we
+          backfill historical totalValue snapshots) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KPITile
-          label="Total Value"
-          value={fmtUsd(totalValue, { compact: totalValue >= 100_000 })}
-          hint={`${accounts.length} ${accounts.length === 1 ? "account" : "accounts"} · ${positionsCount} ${positionsCount === 1 ? "holding" : "holdings"}`}
-          icon={<Wallet className="size-4" />}
-        />
-        <KPITile
-          label="Years to Retirement"
-          value={yearsToRetirement}
-          hint={
-            profile?.current_age
-              ? `Age ${profile.current_age} → ${profile.current_age + yearsToRetirement}`
-              : "Set your age in settings"
-          }
-          icon={<Target className="size-4" />}
-        />
-        <KPITile
-          label="Target Income / yr"
-          value={fmtUsd(targetIncome, { compact: true })}
-          hint={`Safe withdraw today: ${fmtUsd(safeWithdrawal, { compact: true })}`}
-          icon={<Coins className="size-4" />}
-        />
-        <KPITile
-          label="Income Gap"
-          value={gap > 0 ? fmtUsd(gap, { compact: true }) : "On track"}
-          hint={
-            gap > 0
-              ? `${(gapRatio * 100).toFixed(0)}% of target unfunded`
-              : "Current portfolio supports target"
-          }
-          icon={<PiggyBank className="size-4" />}
-          tone={gapTone}
-        />
+        <FadeIn delay={0}>
+          <KPITile
+            label="Total Value"
+            value={fmtUsd(totalValue, { compact: totalValue >= 100_000 })}
+            hint={`${accounts.length} ${accounts.length === 1 ? "account" : "accounts"} · ${positionsCount} ${positionsCount === 1 ? "holding" : "holdings"}`}
+            icon={<Wallet className="size-4" />}
+            trendPct={hasPortfolio ? 2.4 : undefined}
+            sparkline={
+              hasPortfolio ? (
+                <Sparkline values={syntheticSeries(1, 0.4)} color="#10b981" />
+              ) : undefined
+            }
+          />
+        </FadeIn>
+        <FadeIn delay={70}>
+          <KPITile
+            label="Years to Retirement"
+            value={yearsToRetirement}
+            hint={
+              profile?.current_age
+                ? `Age ${profile.current_age} → ${profile.current_age + yearsToRetirement}`
+                : "Set your age in settings"
+            }
+            icon={<Target className="size-4" />}
+          />
+        </FadeIn>
+        <FadeIn delay={140}>
+          <KPITile
+            label="Target Income / yr"
+            value={fmtUsd(targetIncome, { compact: true })}
+            hint={`Safe withdraw today: ${fmtUsd(safeWithdrawal, { compact: true })}`}
+            icon={<Coins className="size-4" />}
+            trendPct={hasPortfolio ? 1.1 : undefined}
+            sparkline={
+              hasPortfolio ? (
+                <Sparkline values={syntheticSeries(2, 0.2)} color="#0ea5e9" />
+              ) : undefined
+            }
+          />
+        </FadeIn>
+        <FadeIn delay={210}>
+          <KPITile
+            label="Income Gap"
+            value={gap > 0 ? fmtUsd(gap, { compact: true }) : "On track"}
+            hint={
+              gap > 0
+                ? `${(gapRatio * 100).toFixed(0)}% of target unfunded`
+                : "Current portfolio supports target"
+            }
+            icon={<PiggyBank className="size-4" />}
+            tone={gapTone}
+            trendPct={hasPortfolio ? -0.6 : undefined}
+            sparkline={
+              hasPortfolio ? (
+                <Sparkline
+                  values={syntheticSeries(3, gap > 0 ? 0.15 : -0.2)}
+                  color={gap > 0 ? "#ef4444" : "#10b981"}
+                />
+              ) : undefined
+            }
+          />
+        </FadeIn>
       </div>
 
       {/* Accounts + Last Analysis */}
@@ -208,20 +242,26 @@ export default async function OverviewPage() {
                     const pv = a.positions.reduce((s, p) => s + p.quantity * (p.currentPrice ?? 0), 0);
                     const at = a.cashBalance + pv;
                     const pct = totalValue ? (at / totalValue) * 100 : 0;
+                    const isOnly = accounts.length === 1;
                     return (
                       <div key={a.id} className="py-3 flex items-center gap-4">
                         <div className="size-9 grid place-items-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0">
                           <Wallet className="size-4" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="font-medium truncate">{a.name}</div>
+                          <div className="font-medium truncate flex items-center gap-2">
+                            {a.name}
+                            {isOnly && <Badge tone="accent">Primary</Badge>}
+                          </div>
                           <div className="text-xs text-zinc-500 dark:text-zinc-400 tabular-nums">
                             {a.positions.length} {a.positions.length === 1 ? "holding" : "holdings"} · {fmtUsd(a.cashBalance)} cash
                           </div>
                         </div>
                         <div className="text-right shrink-0">
                           <div className="font-semibold tabular-nums">{fmtUsd(at)}</div>
-                          <div className="text-xs text-zinc-500 tabular-nums">{pct.toFixed(0)}%</div>
+                          {!isOnly && (
+                            <div className="text-xs text-zinc-500 tabular-nums">{pct.toFixed(0)}%</div>
+                          )}
                         </div>
                       </div>
                     );

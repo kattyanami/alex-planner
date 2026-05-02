@@ -1,6 +1,6 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { ensureUser } from "@/lib/db/queries";
+import { ensureUser, getUserAccountsDetailed } from "@/lib/db/queries";
 import { DashboardShell } from "@/components/dashboard-shell";
 
 export const maxDuration = 60;
@@ -21,5 +21,19 @@ export default async function DashboardLayout({
 
   await ensureUser(userId, displayName ?? undefined);
 
-  return <DashboardShell displayName={displayName}>{children}</DashboardShell>;
+  // Compute portfolio value for the topbar pill
+  const accounts = await getUserAccountsDetailed(userId);
+  const portfolioValue = accounts.reduce(
+    (sum, a) =>
+      sum +
+      a.cashBalance +
+      a.positions.reduce((s, p) => s + p.quantity * (p.currentPrice ?? 0), 0),
+    0,
+  );
+
+  return (
+    <DashboardShell displayName={displayName} portfolioValue={portfolioValue}>
+      {children}
+    </DashboardShell>
+  );
 }
