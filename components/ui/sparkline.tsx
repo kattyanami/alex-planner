@@ -2,6 +2,8 @@
 
 import { useMemo } from "react";
 
+export { syntheticSeries } from "./sparkline-data";
+
 /**
  * Tiny inline SVG sparkline. Synthetic data for now (will be backed by real
  * historical points once we add the analysis-history table).
@@ -58,24 +60,3 @@ export function Sparkline({
   );
 }
 
-/**
- * Generate a synthetic 7-point series tilted up or down by `trend` (-1 to 1)
- * with `noise` magnitude. Stable per `seed` so KPI tiles don't flicker on
- * re-render.
- */
-export function syntheticSeries(seed: number, trend = 0.2, points = 7, noise = 0.15): number[] {
-  // simple LCG for stable per-seed pseudo-randomness
-  let s = seed % 2147483647;
-  if (s <= 0) s += 2147483646;
-  const rand = () => {
-    s = (s * 16807) % 2147483647;
-    return (s - 1) / 2147483646;
-  };
-  const out: number[] = [];
-  let v = 0.5;
-  for (let i = 0; i < points; i++) {
-    v = Math.max(0, Math.min(1, v + trend / points + (rand() - 0.5) * noise));
-    out.push(v);
-  }
-  return out;
-}

@@ -33,7 +33,8 @@ import {
   KPITile,
 } from "@/components/ui/primitives";
 import { FadeIn } from "@/components/ui/animations";
-import { Sparkline, syntheticSeries } from "@/components/ui/sparkline";
+import { Sparkline } from "@/components/ui/sparkline";
+import { syntheticSeries } from "@/components/ui/sparkline-data";
 import { ActivityFeed } from "@/components/activity-feed";
 import { AllocationDonut, AllocationLegend } from "@/components/charts/allocation-donut";
 import { HoldingsStrip } from "@/components/holdings-strip";
