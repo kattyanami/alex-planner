@@ -180,11 +180,16 @@ export async function refreshPricesAction(): Promise<RefreshPricesResult> {
     revalidatePath("/dashboard");
     revalidatePath("/dashboard/holdings");
 
+    const providerBreakdown =
+      Object.entries(byProvider)
+        .map(([p, n]) => `${n} ${p === "polygon" ? "Polygon" : p === "yahoo" ? "Yahoo" : p}`)
+        .join(", ") || "0";
+
     await logActivity(
       userId,
       "profile_saved", // closest existing kind; could add a new one later
-      `Refreshed ${updated} prices from Yahoo Finance${misses.length ? ` (${misses.length} unavailable)` : ""}`,
-      { kind: "prices_refreshed", updated, missed: misses.length, misses },
+      `Refreshed ${updated} prices (${providerBreakdown})${misses.length ? `, ${misses.length} unavailable` : ""}`,
+      { kind: "prices_refreshed", updated, missed: misses.length, misses, byProvider },
     );
 
     return {
