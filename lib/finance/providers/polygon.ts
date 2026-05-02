@@ -84,6 +84,10 @@ async function getJson<T>(url: string): Promise<T | null> {
   }
 }
 
+/**
+ * Full quote with name + currency. Costs 2 free-tier API calls.
+ * Use for catalog adds where we want the metadata.
+ */
 export async function fetchPolygonQuote(rawSymbol: string): Promise<Quote | null> {
   const key = apiKey();
   if (!key) return null;
@@ -91,26 +95,54 @@ export async function fetchPolygonQuote(rawSymbol: string): Promise<Quote | null
   const symbol = normalizeForPolygon(rawSymbol);
   const original = rawSymbol.trim().toUpperCase();
 
-  // Previous close — works on free tier
   const prev = await getJson<PrevAggResponse>(
     `${BASE}/v2/aggs/ticker/${encodeURIComponent(symbol)}/prev?adjusted=true&apiKey=${key}`,
   );
   const close = prev?.results?.[0]?.c;
   if (close == null || close <= 0) return null;
 
-  // Optional metadata — non-blocking
   let longName: string | null = null;
+  let currency: string | null = null;
   const details = await getJson<TickerDetailsResponse>(
     `${BASE}/v3/reference/tickers/${encodeURIComponent(symbol)}?apiKey=${key}`,
   );
   if (details?.results?.name) longName = details.results.name;
+  if (details?.results?.currency_name) currency = details.results.currency_name;
 
   return {
     symbol: original,
     price: close,
-    currency: details?.results?.currency_name ?? null,
+    currency,
     shortName: null,
     longName,
+    provider: "polygon",
+    fetchedAt: new Date(),
+  };
+}
+
+/**
+ * Price-only fetch. 1 free-tier API call per symbol. Use for bulk refreshes
+ * where we already have the name in the DB.
+ */
+export async function fetchPolygonPrice(rawSymbol: string): Promise<Quote | null> {
+  const key = apiKey();
+  if (!key) return null;
+
+  const symbol = normalizeForPolygon(rawSymbol);
+  const original = rawSymbol.trim().toUpperCase();
+
+  const prev = await getJson<PrevAggResponse>(
+    `${BASE}/v2/aggs/ticker/${encodeURIComponent(symbol)}/prev?adjusted=true&apiKey=${key}`,
+  );
+  const close = prev?.results?.[0]?.c;
+  if (close == null || close <= 0) return null;
+
+  return {
+    symbol: original,
+    price: close,
+    currency: null,
+    shortName: null,
+    longName: null,
     provider: "polygon",
     fetchedAt: new Date(),
   };
@@ -171,21 +203,23 @@ export async function fetchPolygonBulkSnapshot(
 }
 
 /**
- * Per-symbol fetch with throttling for the free tier (5 calls/min).
- * Slow but works. Returns whatever was fetched before timeout.
+ * Free-tier-safe bulk fetch. Uses price-only endpoint (1 call/symbol),
+ * runs in parallel up to maxCalls. Default 5 fits the 5-calls/min limit.
+ * Caller should pass remaining symbols to Yahoo to fill the gap.
  */
-export async function fetchPolygonQuotesThrottled(
+export async function fetchPolygonPricesParallel(
   rawSymbols: string[],
-  opts: { maxCalls?: number; delayMs?: number } = {},
+  opts: { maxCalls?: number } = {},
 ): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
-  const max = opts.maxCalls ?? 5; // free tier: stay under 5/min
-  const delay = opts.delayMs ?? 0;
+  const max = opts.maxCalls ?? 5;
   const limit = Math.min(rawSymbols.length, max);
-  for (let i = 0; i < limit; i++) {
-    if (i > 0 && delay > 0) await new Promise((r) => setTimeout(r, delay));
-    const q = await fetchPolygonQuote(rawSymbols[i]);
-    if (q) out.set(rawSymbols[i].trim().toUpperCase(), q);
+  const slice = rawSymbols.slice(0, limit);
+
+  const results = await Promise.all(slice.map((s) => fetchPolygonPrice(s)));
+  for (let i = 0; i < slice.length; i++) {
+    const q = results[i];
+    if (q) out.set(slice[i].trim().toUpperCase(), q);
   }
   return out;
 }

@@ -11,6 +11,7 @@
  */
 import {
   fetchPolygonBulkSnapshot,
+  fetchPolygonPricesParallel,
   fetchPolygonQuote,
   isPolygonConfigured,
 } from "./providers/polygon";
@@ -40,18 +41,34 @@ export async function fetchQuote(rawSymbol: string): Promise<Quote | null> {
 }
 
 /**
- * Fetch many quotes. Strategy:
- *  1. Try Polygon's bulk snapshot endpoint (paid; instant, all-at-once)
- *  2. If 401/403/null (free tier), fall through to Yahoo (free, fast batch)
- *  3. For symbols missed by Polygon (crypto, obscure), top up via Yahoo
+ * Fetch many quotes. Strategy (paid → free → Yahoo):
+ *  1. Try Polygon's bulk snapshot endpoint (paid; instant, all-at-once).
+ *     On free tier this 403's and returns null, so we fall through.
+ *  2. Try Polygon per-symbol price-only for up to maxPolygonCalls (default
+ *     5, matching the free-tier rate limit). 1 API call per symbol, parallel.
+ *  3. Whatever's still missing → Yahoo (free, batched, fast).
+ *
+ * On free Polygon tier with a 25-instrument catalog this gives ~5 Polygon +
+ * 20 Yahoo per refresh, demonstrably using both providers.
  */
-export async function fetchQuotes(rawSymbols: string[]): Promise<Map<string, Quote>> {
+export async function fetchQuotes(
+  rawSymbols: string[],
+  opts: { maxPolygonCalls?: number } = {},
+): Promise<Map<string, Quote>> {
   if (rawSymbols.length === 0) return new Map();
 
   let primary = new Map<string, Quote>();
   if (isPolygonConfigured()) {
     const snap = await fetchPolygonBulkSnapshot(rawSymbols);
-    if (snap) primary = snap;
+    if (snap && snap.size > 0) {
+      primary = snap;
+    } else {
+      // Free tier: per-symbol Polygon for the first N
+      const poly = await fetchPolygonPricesParallel(rawSymbols, {
+        maxCalls: opts.maxPolygonCalls ?? 5,
+      });
+      for (const [k, v] of poly) primary.set(k, v);
+    }
   }
 
   // Symbols still missing → ask Yahoo
