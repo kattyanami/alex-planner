@@ -14,13 +14,20 @@ import {
 } from "lucide-react";
 import { fmtUsd } from "@/lib/format";
 
-const NAV = [
+type NavItem = {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?: string;
+};
+
+const NAV: NavItem[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/dashboard/holdings", label: "Holdings", icon: Wallet },
   { href: "/dashboard/analysis", label: "Analysis", icon: Sparkles },
   { href: "/dashboard/research", label: "Research", icon: Newspaper },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
-] as const;
+];
 
 export function DashboardShell({
   children,
@@ -125,7 +132,7 @@ export function DashboardShell({
                     }`}
                   />
                   <span className="flex-1">{item.label}</span>
-                  {"badge" in item && item.badge && (
+                  {item.badge && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-medium">
                       {item.badge}
                     </span>
