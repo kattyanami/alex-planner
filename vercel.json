@@ -1,15 +1,3 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-
-  "_README": "JSON has no comment syntax, so we use unknown top-level keys (Vercel ignores them) for documentation. The 'crons' array below is what's ACTIVE — empty = no scheduled runs. To enable scheduled research, copy entries from '_disabledCrons' into 'crons' and set CRON_SECRET env on Vercel (any random 32+ char string works; openssl rand -base64 32 is convenient). Then redeploy.",
-
-  "crons": [],
-
-  "_disabledCrons": [
-    {
-      "path": "/api/cron/research",
-      "schedule": "0 2 * * *",
-      "_note": "Daily at 02:00 UTC. To switch cadence, replace the schedule. Examples: '0 * * * *' hourly · '0 0 * * *' daily midnight UTC · '0 0 * * 1' weekly Monday 00:00 UTC · '0 6,18 * * 1-5' twice/day weekdays at 06:00 + 18:00 UTC."
-    }
-  ]
+  "$schema": "https://openapi.vercel.sh/vercel.json"
 }
