@@ -6,11 +6,14 @@ import {
   instruments,
   jobs,
   positions,
+  researchDocuments,
   users,
   type ActivityEvent,
   type Job,
+  type ResearchDocument,
 } from "./schema";
 import type { Portfolio, UserProfile } from "@/lib/agents/reporter";
+import type { ResearchDoc } from "@/lib/agents/researcher";
 
 export async function ensureUser(clerkUserId: string, displayName?: string) {
   await db
@@ -491,4 +494,101 @@ export async function getLastAnalysis(clerkUserId: string): Promise<Job | null> 
     .orderBy(desc(jobs.completedAt))
     .limit(1);
   return j ?? null;
+}
+
+// ---- Research documents ----------------------------------------------------
+
+export async function upsertResearchDocs(docs: ResearchDoc[]): Promise<{
+  inserted: number;
+  skipped: number;
+}> {
+  if (docs.length === 0) return { inserted: 0, skipped: 0 };
+  let inserted = 0;
+  let skipped = 0;
+  for (const d of docs) {
+    const result = await db
+      .insert(researchDocuments)
+      .values({
+        symbol: d.symbol,
+        source: d.source,
+        url: d.url,
+        title: d.title,
+        content: d.content,
+        hash: d.hash,
+        publishedAt: d.publishedAt,
+        metadata: d.metadata ?? null,
+      })
+      .onConflictDoNothing()
+      .returning({ id: researchDocuments.id });
+    if (result.length > 0) inserted++;
+    else skipped++;
+  }
+  return { inserted, skipped };
+}
+
+export async function listResearchForSymbols(
+  symbols: string[],
+  limitPerSymbol = 5,
+): Promise<ResearchDocument[]> {
+  if (symbols.length === 0) return [];
+  // Drizzle inArray would be cleaner but we filter post-fetch for simplicity
+  const all = await db
+    .select()
+    .from(researchDocuments)
+    .orderBy(desc(researchDocuments.fetchedAt))
+    .limit(limitPerSymbol * symbols.length * 4);
+  const set = new Set(symbols.map((s) => s.toUpperCase()));
+  const grouped = new Map<string, ResearchDocument[]>();
+  for (const r of all) {
+    if (!set.has(r.symbol)) continue;
+    const list = grouped.get(r.symbol) ?? [];
+    if (list.length < limitPerSymbol) {
+      list.push(r);
+      grouped.set(r.symbol, list);
+    }
+  }
+  return Array.from(grouped.values()).flat();
+}
+
+export async function getResearchSummaryForUser(clerkUserId: string): Promise<{
+  symbols: Array<{
+    symbol: string;
+    docCount: number;
+    lastFetchedAt: Date | null;
+    sample: ResearchDocument[];
+  }>;
+  totalDocs: number;
+}> {
+  const portfolio = await getUserAccountsDetailed(clerkUserId);
+  const symbols = Array.from(
+    new Set(portfolio.flatMap((a) => a.positions.map((p) => p.symbol))),
+  );
+  if (symbols.length === 0) return { symbols: [], totalDocs: 0 };
+
+  const all = await db
+    .select()
+    .from(researchDocuments)
+    .orderBy(desc(researchDocuments.fetchedAt));
+  const set = new Set(symbols);
+  const filtered = all.filter((r) => set.has(r.symbol));
+
+  const grouped = new Map<string, ResearchDocument[]>();
+  for (const r of filtered) {
+    const list = grouped.get(r.symbol) ?? [];
+    list.push(r);
+    grouped.set(r.symbol, list);
+  }
+
+  return {
+    symbols: symbols.map((sym) => {
+      const docs = grouped.get(sym) ?? [];
+      return {
+        symbol: sym,
+        docCount: docs.length,
+        lastFetchedAt: docs[0]?.fetchedAt ?? null,
+        sample: docs.slice(0, 3),
+      };
+    }),
+    totalDocs: filtered.length,
+  };
 }

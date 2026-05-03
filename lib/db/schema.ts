@@ -149,3 +149,28 @@ export const activityEvents = pgTable(
 
 export type ActivityEvent = typeof activityEvents.$inferSelect;
 export type NewActivityEvent = typeof activityEvents.$inferInsert;
+
+export const researchDocuments = pgTable(
+  "research_documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    symbol: varchar("symbol", { length: 20 })
+      .references(() => instruments.symbol, { onDelete: "cascade" })
+      .notNull(),
+    source: varchar("source", { length: 50 }).notNull(),
+    url: text("url").notNull(),
+    title: text("title").notNull(),
+    content: text("content"),
+    hash: varchar("hash", { length: 64 }).notNull(),
+    publishedAt: timestamp("published_at"),
+    fetchedAt: timestamp("fetched_at").defaultNow().notNull(),
+    metadata: jsonb("metadata"),
+  },
+  (t) => [
+    index("idx_research_symbol_fetched").on(t.symbol, t.fetchedAt),
+    unique("research_symbol_hash_unique").on(t.symbol, t.hash),
+  ],
+);
+
+export type ResearchDocument = typeof researchDocuments.$inferSelect;
+export type NewResearchDocument = typeof researchDocuments.$inferInsert;

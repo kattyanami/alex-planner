@@ -1,36 +1,31 @@
-import { Newspaper, Globe, Database, Clock } from "lucide-react";
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
+import { Clock, Database, Globe, Newspaper } from "lucide-react";
+import { getResearchSummaryForUser, getUserAccountsDetailed } from "@/lib/db/queries";
 import { PageHeader } from "@/components/dashboard-shell";
-import {
-  Badge,
-  Card,
-  CardBody,
-  CardHeader,
-  EmptyState,
-} from "@/components/ui/primitives";
+import { Badge, Card, CardBody, CardHeader } from "@/components/ui/primitives";
+import { ResearcherPanel } from "@/components/researcher-panel";
 
-export default function ResearchPage() {
+export default async function ResearchPage() {
+  const { userId } = await auth();
+  if (!userId) redirect("/sign-in");
+
+  const [accounts, summary] = await Promise.all([
+    getUserAccountsDetailed(userId),
+    getResearchSummaryForUser(userId),
+  ]);
+
+  const hasHoldings = accounts.some((a) => a.positions.length > 0);
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Research"
-        description="Scheduled web research per holding — Vercel Cron triggers a Sandbox running Playwright, results land in pgvector for retrieval."
-        action={<Badge tone="warning">Phase 5 — coming next</Badge>}
+        description="Per-holding news fetched from Yahoo Finance. Deduplicated by URL hash. Will feed Phase 6 pgvector retrieval so the Reporter agent can RAG over real headlines."
+        action={<Badge tone="warning">Cron disabled — manual only</Badge>}
       />
 
-      <Card>
-        <CardHeader
-          icon={<Newspaper className="size-4" />}
-          title="Researcher pipeline"
-          description="Mirrors the right side of the AWS architecture (Scheduler → Researcher → Ingest → Vector Store)."
-        />
-        <CardBody>
-          <EmptyState
-            icon={<Newspaper className="size-5" />}
-            title="Researcher not enabled yet"
-            description="Once Phase 5 ships, this page shows last cron run, doc count per symbol, and latest fetched headlines for each holding in your portfolio."
-          />
-        </CardBody>
-      </Card>
+      <ResearcherPanel summary={summary.symbols} hasHoldings={hasHoldings} />
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
@@ -39,28 +34,47 @@ export default function ResearchPage() {
             title="Scheduler"
             description="Vercel Cron"
           />
-          <CardBody className="text-sm text-zinc-500 dark:text-zinc-400">
-            Nightly trigger at 02:00 UTC, configurable in <code className="text-xs">vercel.json</code>. Replaces AWS EventBridge.
+          <CardBody className="text-sm text-zinc-500 dark:text-zinc-400 space-y-2">
+            <p>
+              Cron route exists at{" "}
+              <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800/60">
+                /api/cron/research
+              </code>{" "}
+              but is not yet on a schedule.
+            </p>
+            <p>
+              To enable: add the cron block to{" "}
+              <code className="font-mono text-xs">vercel.json</code> (the route
+              file has the exact snippet to paste in its top comment).
+            </p>
           </CardBody>
         </Card>
         <Card>
           <CardHeader
             icon={<Globe className="size-4" />}
             title="Researcher"
-            description="Sandbox + Playwright"
+            description="Yahoo Finance news"
           />
           <CardBody className="text-sm text-zinc-500 dark:text-zinc-400">
-            Ephemeral isolated VM scrapes per-holding sources (Yahoo Finance, SEC EDGAR). Replaces AWS Lambda + Playwright Layer.
+            Currently fetches ~6 recent news articles per holding via{" "}
+            <code className="font-mono text-xs">yahoo-finance2</code>. Upgrade
+            path: replace inner fetcher with Vercel Sandbox + Playwright for
+            JS-heavy sources (SEC EDGAR, earnings transcripts).
           </CardBody>
         </Card>
         <Card>
           <CardHeader
             icon={<Database className="size-4" />}
-            title="Vector store"
-            description="Neon pgvector"
+            title="Storage"
+            description="Postgres → pgvector (Phase 6)"
           />
           <CardBody className="text-sm text-zinc-500 dark:text-zinc-400">
-            OpenAI embeddings stored alongside docs in Neon, queried at agent runtime. Replaces AWS S3 Vectors.
+            Documents land in{" "}
+            <code className="font-mono text-xs">research_documents</code> with
+            unique{" "}
+            <code className="font-mono text-xs">(symbol, hash)</code> dedup.
+            Phase 6 will add an embeddings column + similarity search so the
+            Reporter agent can RAG over real news instead of training data.
           </CardBody>
         </Card>
       </div>
