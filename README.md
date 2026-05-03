@@ -160,4 +160,4 @@ to hit feature parity with the AWS original.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
