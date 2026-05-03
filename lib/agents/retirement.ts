@@ -1,4 +1,4 @@
-import { generateText } from "ai";
+import { generateText, streamText } from "ai";
 import { MODELS } from "@/lib/ai/models";
 import { LIFE_DEFAULTS, MARKET_ASSUMPTIONS, SIMULATION } from "@/lib/finance/assumptions";
 import type { Portfolio, UserProfile } from "./reporter";
@@ -270,4 +270,125 @@ Write the markdown retirement-readiness analysis now.`,
     tokensOut: usage.outputTokens ?? 0,
     ms: Date.now() - start,
   };
+}
+
+/**
+ * Streaming variant. Yields the same metrics block (Monte Carlo runs first,
+ * non-streaming, since it's pure compute) followed by the streaming markdown
+ * narrative. Last line is a sentinel with token + ms info.
+ *
+ * Sentinel format:
+ *   \n\n<<<META>>>{"tokensIn":...,"tokensOut":...,"ms":...,"metrics":{...}}
+ */
+export const RETIREMENT_META_SENTINEL = "<<<META>>>";
+
+export async function streamRetirement(
+  portfolio: Portfolio,
+  user: UserProfile,
+  inputs: RetirementInputs = {},
+): Promise<ReadableStream<Uint8Array>> {
+  const start = Date.now();
+  const portfolioValue = calcPortfolioValue(portfolio);
+  const allocation = calcAllocation(portfolio);
+  const yearsUntilRetirement =
+    user.years_until_retirement ?? LIFE_DEFAULTS.yearsUntilRetirement;
+  const targetIncome =
+    user.target_retirement_income ?? LIFE_DEFAULTS.targetRetirementIncome;
+  const currentAge = inputs.currentAge ?? LIFE_DEFAULTS.currentAge;
+  const annualContribution =
+    inputs.annualContribution ?? LIFE_DEFAULTS.annualContribution;
+
+  const mc = monteCarlo(
+    portfolioValue,
+    yearsUntilRetirement,
+    targetIncome,
+    allocation,
+    annualContribution,
+  );
+  const proj = projections(
+    portfolioValue,
+    yearsUntilRetirement,
+    allocation,
+    currentAge,
+    annualContribution,
+  );
+
+  const fmt = (n: number) => `$${n.toLocaleString("en-US")}`;
+  const allocStr = Object.entries(allocation)
+    .filter(([, v]) => v > 0)
+    .map(([k, v]) => `${k}: ${(v * 100).toFixed(0)}%`)
+    .join(", ");
+
+  const projLines = proj
+    .slice(0, 8)
+    .map((p) =>
+      p.phase === "accumulation"
+        ? `- Age ${p.age}: ${fmt(p.portfolio_value)} (building wealth)`
+        : `- Age ${p.age}: ${fmt(p.portfolio_value)} (annual income: ${fmt(p.annual_income)})`,
+    )
+    .join("\n");
+
+  const safeWithdrawal = portfolioValue * SIMULATION.safeWithdrawalRate;
+  const gap = targetIncome - safeWithdrawal;
+
+  const result = streamText({
+    model: MODELS.retirement,
+    system: RETIREMENT_INSTRUCTIONS,
+    prompt: `# Retirement Analysis Inputs
+
+## Current Situation
+- Portfolio Value: ${fmt(portfolioValue)}
+- Asset Allocation: ${allocStr}
+- Years to Retirement: ${yearsUntilRetirement}
+- Target Annual Income: ${fmt(targetIncome)}
+- Current Age: ${currentAge}
+- Annual Contribution: ${fmt(annualContribution)}
+
+## Monte Carlo (${SIMULATION.numSims} scenarios, ${SIMULATION.retirementHorizonYears}-year retirement)
+- Success Rate: ${mc.success_rate}%
+- Expected Portfolio Value at Retirement: ${fmt(mc.expected_at_retirement)}
+- 10th Percentile: ${fmt(mc.p10)} (worst case)
+- Median Final Value: ${fmt(mc.median_final)}
+- 90th Percentile: ${fmt(mc.p90)} (best case)
+- Average Years Portfolio Lasts: ${mc.avg_years_lasted} / ${SIMULATION.retirementHorizonYears}
+
+## Milestones
+${projLines}
+
+## Safe Withdrawal Rate Gap
+- ${(SIMULATION.safeWithdrawalRate * 100).toFixed(0)}% rule on current portfolio: ${fmt(safeWithdrawal)} initial annual income
+- Target Income: ${fmt(targetIncome)}
+- Gap: ${fmt(gap)} ${gap > 0 ? "(target exceeds current safe withdrawal)" : "(target is achievable)"}
+
+Write the markdown retirement-readiness analysis now.`,
+  });
+
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const chunk of result.textStream) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        const usage = await result.usage;
+        const meta = {
+          tokensIn: usage.inputTokens ?? 0,
+          tokensOut: usage.outputTokens ?? 0,
+          ms: Date.now() - start,
+          metrics: {
+            portfolioValue,
+            allocation,
+            monteCarlo: mc,
+            projections: proj,
+          },
+        };
+        controller.enqueue(
+          encoder.encode(`\n\n${RETIREMENT_META_SENTINEL}${JSON.stringify(meta)}`),
+        );
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
 }

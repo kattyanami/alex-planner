@@ -1,6 +1,10 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { ensureUser, getUserAccountsDetailed } from "@/lib/db/queries";
+import {
+  ensureUser,
+  getUserAccountsDetailed,
+  listAllInstruments,
+} from "@/lib/db/queries";
 import { DashboardShell } from "@/components/dashboard-shell";
 
 export const maxDuration = 60;
@@ -21,8 +25,11 @@ export default async function DashboardLayout({
 
   await ensureUser(userId, displayName ?? undefined);
 
-  // Compute portfolio value for the topbar pill
-  const accounts = await getUserAccountsDetailed(userId);
+  const [accounts, instruments] = await Promise.all([
+    getUserAccountsDetailed(userId),
+    listAllInstruments(),
+  ]);
+
   const portfolioValue = accounts.reduce(
     (sum, a) =>
       sum +
@@ -31,8 +38,25 @@ export default async function DashboardLayout({
     0,
   );
 
+  const paletteInstruments = instruments.map((i) => ({
+    symbol: i.symbol,
+    name: i.name,
+    currentPrice: i.currentPrice ? Number(i.currentPrice) : null,
+  }));
+
+  const paletteAccounts = accounts.map((a) => ({
+    id: a.id,
+    name: a.name,
+    positionCount: a.positions.length,
+  }));
+
   return (
-    <DashboardShell displayName={displayName} portfolioValue={portfolioValue}>
+    <DashboardShell
+      displayName={displayName}
+      portfolioValue={portfolioValue}
+      paletteInstruments={paletteInstruments}
+      paletteAccounts={paletteAccounts}
+    >
       {children}
     </DashboardShell>
   );

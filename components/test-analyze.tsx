@@ -14,15 +14,12 @@ import {
 } from "lucide-react";
 import {
   runCharterAgent,
-  runReporterAgent,
-  runRetirementAgent,
   runTaggerAgent,
   saveAnalysisAction,
   type CharterActionResult,
-  type ReporterActionResult,
-  type RetirementActionResult,
   type TaggerActionResult,
 } from "@/lib/actions/analyze";
+import { streamAgent } from "@/lib/streaming";
 import { Badge, Button, Card, CardBody, CardHeader, EmptyState } from "@/components/ui/primitives";
 import { PortfolioChart } from "@/components/charts/portfolio-charts";
 import { fmtUsd } from "@/lib/format";
@@ -38,17 +35,50 @@ type AgentState<T> = {
 };
 
 type TaggerData = Extract<TaggerActionResult, { ok: true }>;
-type ReporterData = Extract<ReporterActionResult, { ok: true }>["result"];
 type CharterData = Extract<CharterActionResult, { ok: true }>["result"];
-type RetirementData = Extract<RetirementActionResult, { ok: true }>["result"];
+
+type ReporterStreamData = {
+  markdown: string;
+  tokensIn: number;
+  tokensOut: number;
+  ms: number;
+  ragDocs: number;
+  ragSymbols: number;
+};
+
+type RetirementStreamData = {
+  markdown: string;
+  tokensIn: number;
+  tokensOut: number;
+  ms: number;
+  metrics: {
+    portfolioValue: number;
+    allocation: Record<string, number>;
+    monteCarlo: {
+      success_rate: number;
+      median_final: number;
+      p10: number;
+      p90: number;
+      avg_years_lasted: number;
+      expected_at_retirement: number;
+    };
+    projections: Array<{
+      year: number;
+      age: number;
+      portfolio_value: number;
+      annual_income: number;
+      phase: "accumulation" | "retirement";
+    }>;
+  };
+};
 
 const initial = <T,>(): AgentState<T> => ({ status: "idle" });
 
 export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean }) {
   const [tagger, setTagger] = useState<AgentState<TaggerData>>(initial);
-  const [reporter, setReporter] = useState<AgentState<ReporterData>>(initial);
+  const [reporter, setReporter] = useState<AgentState<ReporterStreamData>>(initial);
   const [charter, setCharter] = useState<AgentState<CharterData>>(initial);
-  const [retirement, setRetirement] = useState<AgentState<RetirementData>>(initial);
+  const [retirement, setRetirement] = useState<AgentState<RetirementStreamData>>(initial);
 
   const anyRunning =
     tagger.status === "running" ||
@@ -77,14 +107,57 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
       setTagger({ status: "done", data: r, finishedAt: Date.now() });
       return r;
     });
-    const rep = runReporterAgent().then((r) => {
-      if ("error" in r) {
-        setReporter({ status: "error", error: r.error, finishedAt: Date.now() });
+
+    // Reporter — streaming
+    const rep = (async (): Promise<ReporterStreamData | null> => {
+      try {
+        const result = await streamAgent<{
+          tokensIn: number;
+          tokensOut: number;
+          ms: number;
+          ragDocs: number;
+          ragSymbols: number;
+        }>("/api/agents/reporter", {
+          onText: (text) => {
+            setReporter((prev) => ({
+              ...prev,
+              status: "running",
+              data: {
+                markdown: text,
+                tokensIn: prev.data?.tokensIn ?? 0,
+                tokensOut: prev.data?.tokensOut ?? 0,
+                ms: prev.data?.ms ?? 0,
+                ragDocs: prev.data?.ragDocs ?? 0,
+                ragSymbols: prev.data?.ragSymbols ?? 0,
+              },
+            }));
+          },
+          onMeta: () => {},
+        });
+        if (!result.meta) {
+          setReporter({
+            status: "error",
+            error: "Stream ended without metadata",
+            finishedAt: Date.now(),
+          });
+          return null;
+        }
+        const data: ReporterStreamData = {
+          markdown: result.text,
+          ...result.meta,
+        };
+        setReporter({ status: "done", data, finishedAt: Date.now() });
+        return data;
+      } catch (err) {
+        setReporter({
+          status: "error",
+          error: err instanceof Error ? err.message : "Reporter failed",
+          finishedAt: Date.now(),
+        });
         return null;
       }
-      setReporter({ status: "done", data: r.result, finishedAt: Date.now() });
-      return r.result;
-    });
+    })();
+
     const cha = runCharterAgent().then((r) => {
       if ("error" in r) {
         setCharter({ status: "error", error: r.error, finishedAt: Date.now() });
@@ -93,14 +166,68 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
       setCharter({ status: "done", data: r.result, finishedAt: Date.now() });
       return r.result;
     });
-    const ret = runRetirementAgent().then((r) => {
-      if ("error" in r) {
-        setRetirement({ status: "error", error: r.error, finishedAt: Date.now() });
+
+    // Retirement — streaming (markdown only; metrics arrive in metadata)
+    const ret = (async (): Promise<RetirementStreamData | null> => {
+      try {
+        const result = await streamAgent<{
+          tokensIn: number;
+          tokensOut: number;
+          ms: number;
+          metrics: RetirementStreamData["metrics"];
+        }>("/api/agents/retirement", {
+          onText: (text) => {
+            setRetirement((prev) => ({
+              ...prev,
+              status: "running",
+              data: prev.data
+                ? { ...prev.data, markdown: text }
+                : ({
+                    markdown: text,
+                    tokensIn: 0,
+                    tokensOut: 0,
+                    ms: 0,
+                    metrics: {
+                      portfolioValue: 0,
+                      allocation: {},
+                      monteCarlo: {
+                        success_rate: 0,
+                        median_final: 0,
+                        p10: 0,
+                        p90: 0,
+                        avg_years_lasted: 0,
+                        expected_at_retirement: 0,
+                      },
+                      projections: [],
+                    },
+                  } as RetirementStreamData),
+            }));
+          },
+          onMeta: () => {},
+        });
+        if (!result.meta) {
+          setRetirement({
+            status: "error",
+            error: "Stream ended without metadata",
+            finishedAt: Date.now(),
+          });
+          return null;
+        }
+        const data: RetirementStreamData = {
+          markdown: result.text,
+          ...result.meta,
+        };
+        setRetirement({ status: "done", data, finishedAt: Date.now() });
+        return data;
+      } catch (err) {
+        setRetirement({
+          status: "error",
+          error: err instanceof Error ? err.message : "Retirement failed",
+          finishedAt: Date.now(),
+        });
         return null;
       }
-      setRetirement({ status: "done", data: r.result, finishedAt: Date.now() });
-      return r.result;
-    });
+    })();
 
     const [tagR, repR, chaR, retR] = await Promise.all([tag, rep, cha, ret]);
     if (tagR && repR && chaR && retR) {

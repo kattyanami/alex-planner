@@ -1,4 +1,4 @@
-import { generateText } from "ai";
+import { generateText, streamText } from "ai";
 import { MODELS } from "@/lib/ai/models";
 import { embedText } from "./embedder";
 import { findRelevantDocsForSymbol } from "@/lib/db/queries";
@@ -232,4 +232,60 @@ Make it informative yet accessible to a retail investor.${research.docCount > 0 
     ragDocs: research.docCount,
     ragSymbols: research.symbolsWithDocs,
   };
+}
+
+/**
+ * Streaming variant. Returns a ReadableStream of UTF-8 text chunks of the
+ * markdown, ending with a metadata sentinel line so the client can pick up
+ * tokens / ms / RAG counts after the stream finishes.
+ *
+ * Sentinel format (last line of the stream):
+ *   \n\n<<<META>>>{"tokensIn":...,"tokensOut":...,"ms":...,"ragDocs":...,"ragSymbols":...}
+ */
+export const REPORTER_META_SENTINEL = "<<<META>>>";
+
+export async function streamReport(
+  portfolio: Portfolio,
+  user: UserProfile,
+): Promise<ReadableStream<Uint8Array>> {
+  const summary = formatPortfolioForAnalysis(portfolio, user);
+  const start = Date.now();
+  const research = await buildResearchContext(portfolio, user);
+
+  const result = streamText({
+    model: MODELS.reporter,
+    system: REPORTER_INSTRUCTIONS,
+    prompt: `Analyze this investment portfolio and write a comprehensive report.
+
+${summary}${research.block}
+
+Generate a detailed, professional analysis report in markdown format. Include all the standard sections (Executive Summary, Portfolio Composition, Diversification, Risk, Retirement Readiness, Recommendations, Conclusion).
+
+Make it informative yet accessible to a retail investor.${research.docCount > 0 ? " Cite specific news headlines from the Recent News Context section when relevant." : ""}`,
+  });
+
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const chunk of result.textStream) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        const usage = await result.usage;
+        const meta = {
+          tokensIn: usage.inputTokens ?? 0,
+          tokensOut: usage.outputTokens ?? 0,
+          ms: Date.now() - start,
+          ragDocs: research.docCount,
+          ragSymbols: research.symbolsWithDocs,
+        };
+        controller.enqueue(
+          encoder.encode(`\n\n${REPORTER_META_SENTINEL}${JSON.stringify(meta)}`),
+        );
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
 }

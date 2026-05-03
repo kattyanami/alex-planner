@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
@@ -13,6 +14,11 @@ import {
   Wallet,
 } from "lucide-react";
 import { fmtUsd } from "@/lib/format";
+import {
+  CommandPalette,
+  type PaletteAccount,
+  type PaletteInstrument,
+} from "@/components/command-palette";
 
 type NavItem = {
   href: string;
@@ -33,12 +39,29 @@ export function DashboardShell({
   children,
   displayName,
   portfolioValue,
+  paletteInstruments = [],
+  paletteAccounts = [],
 }: {
   children: React.ReactNode;
   displayName?: string | null;
   portfolioValue?: number | null;
+  paletteInstruments?: PaletteInstrument[];
+  paletteAccounts?: PaletteAccount[];
 }) {
   const pathname = usePathname();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Global ⌘K / Ctrl+K listener
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="relative min-h-screen bg-zinc-50 dark:bg-black text-zinc-900 dark:text-zinc-100 overflow-x-hidden">
@@ -83,9 +106,8 @@ export function DashboardShell({
           <div className="flex items-center gap-3">
             <button
               type="button"
-              disabled
-              title="Coming soon"
-              className="hidden sm:flex items-center gap-2 px-3 h-8 rounded-lg border border-zinc-200/60 dark:border-zinc-800/60 bg-white/40 dark:bg-zinc-900/40 text-zinc-500 dark:text-zinc-500 text-xs hover:border-zinc-300 dark:hover:border-zinc-700 transition cursor-not-allowed"
+              onClick={() => setPaletteOpen(true)}
+              className="hidden sm:flex items-center gap-2 px-3 h-8 rounded-lg border border-zinc-200/60 dark:border-zinc-800/60 bg-white/40 dark:bg-zinc-900/40 text-zinc-600 dark:text-zinc-400 text-xs hover:border-emerald-500/40 hover:bg-white/70 dark:hover:bg-zinc-900/70 transition"
             >
               <Search className="size-3.5" />
               <span>Search</span>
@@ -146,6 +168,13 @@ export function DashboardShell({
         {/* Main */}
         <main className="min-w-0">{children}</main>
       </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        instruments={paletteInstruments}
+        accounts={paletteAccounts}
+      />
     </div>
   );
 }
