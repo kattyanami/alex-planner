@@ -1,6 +1,7 @@
 import { generateObject } from "ai";
 import { z } from "zod";
 import { MODELS } from "@/lib/ai/models";
+import { traceAgent } from "@/lib/telemetry";
 
 const sumApprox100 = (v: Record<string, number>) =>
   Math.abs(Object.values(v).reduce((a, b) => a + b, 0) - 100) < 3;
@@ -97,6 +98,18 @@ export async function classifyInstrument(
   symbol: string,
   name: string,
   instrument_type: string = "etf",
+): Promise<{ classification: Classification; tokensIn: number; tokensOut: number; ms: number }> {
+  return traceAgent("tagger", async () => classifyInstrumentInner(symbol, name, instrument_type), {
+    model: "gpt-5-mini",
+    symbol,
+    instrument_type,
+  });
+}
+
+async function classifyInstrumentInner(
+  symbol: string,
+  name: string,
+  instrument_type: string,
 ): Promise<{ classification: Classification; tokensIn: number; tokensOut: number; ms: number }> {
   const start = Date.now();
 

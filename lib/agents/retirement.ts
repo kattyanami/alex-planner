@@ -1,6 +1,7 @@
 import { generateText, streamText } from "ai";
 import { MODELS } from "@/lib/ai/models";
 import { LIFE_DEFAULTS, MARKET_ASSUMPTIONS, SIMULATION } from "@/lib/finance/assumptions";
+import { traceAgent } from "@/lib/telemetry";
 import type { Portfolio, UserProfile } from "./reporter";
 
 type Allocation = {
@@ -181,6 +182,18 @@ export async function analyzeRetirement(
   portfolio: Portfolio,
   user: UserProfile,
   inputs: RetirementInputs = {},
+) {
+  return traceAgent(
+    "retirement",
+    () => analyzeRetirementInner(portfolio, user, inputs),
+    { model: "gpt-5-mini", streaming: false, simCount: SIMULATION.numSims },
+  );
+}
+
+async function analyzeRetirementInner(
+  portfolio: Portfolio,
+  user: UserProfile,
+  inputs: RetirementInputs,
 ) {
   const start = Date.now();
   const portfolioValue = calcPortfolioValue(portfolio);

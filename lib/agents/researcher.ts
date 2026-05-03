@@ -18,6 +18,7 @@
 import crypto from "node:crypto";
 import YahooFinance from "yahoo-finance2";
 import { normalizeForYahoo } from "@/lib/finance/providers/yahoo";
+import { traceAgent } from "@/lib/telemetry";
 
 const yahooFinance = new YahooFinance();
 
@@ -48,6 +49,17 @@ function hashFor(parts: (string | undefined)[]): string {
  * (symbol, hash) constraint on research_documents.
  */
 export async function researchSymbol(
+  rawSymbol: string,
+  opts: { newsCount?: number } = {},
+): Promise<ResearchDoc[]> {
+  return traceAgent(
+    "researcher",
+    () => researchSymbolInner(rawSymbol, opts),
+    { provider: "yahoo_news", symbol: rawSymbol.trim().toUpperCase() },
+  );
+}
+
+async function researchSymbolInner(
   rawSymbol: string,
   opts: { newsCount?: number } = {},
 ): Promise<ResearchDoc[]> {

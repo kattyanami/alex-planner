@@ -1,36 +1,163 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Alex Planner
 
-## Getting Started
+A multi-agent AI portfolio analysis platform — Next.js 16 + Neon Postgres
++ Clerk + Vercel AI SDK on OpenAI gpt-5-mini, with real-time prices from
+Polygon (Yahoo fallback) and pgvector RAG over per-holding news.
 
-First, run the development server:
+Originally an AWS architecture (Lambda, Aurora, SageMaker, S3 Vectors,
+Bedrock, App Runner). Ported to Vercel-native with the same multi-agent
+fan-out pattern but ~70% lower operating cost.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## What it does
+
+Sign in → add holdings (or load the sample portfolio) → click **Analyze**.
+Four agents fan out in parallel:
+
+| Agent | Job | Model |
+|---|---|---|
+| **Tagger** × N | Re-classifies each holding (asset class, regions, sectors, price) | gpt-5-mini · structured output |
+| **Reporter** | Markdown portfolio analysis with retrieval over real news | gpt-5-mini · streaming text |
+| **Charter** | Chart specs (pie / bar / horizontalBar) for the dashboard | gpt-5-mini · structured output |
+| **Retirement** | Monte Carlo simulation (500 stochastic paths) + LLM commentary | TS + gpt-5-mini streaming |
+
+Wall-clock latency is `max(individual durations)`, not sum. Total ~6s,
+~$0.005 per run.
+
+A separate **Researcher** pipeline fetches news headlines per holding from
+Yahoo Finance, embeds them via `text-embedding-3-small` into pgvector,
+and the Reporter retrieves the top-3 most relevant per symbol on every
+run — so the analysis cites *real* recent news instead of training-data
+generalities.
+
+## Stack
+
+| Layer | Service |
+|---|---|
+| Hosting | Vercel (Functions + Edge) |
+| Auth | Clerk v7 |
+| DB | Neon Postgres + Drizzle ORM |
+| Vector store | Neon `pgvector` extension, HNSW index, cosine distance |
+| LLM | OpenAI `gpt-5-mini` (text + structured) + `text-embedding-3-small` |
+| Prices | Polygon.io (rebranded → Massive) primary, Yahoo Finance fallback |
+| News | Yahoo Finance via `yahoo-finance2` |
+| Charts | Recharts |
+| Icons | lucide-react |
+| Fonts | Geist + Geist Mono |
+
+## Project structure
+
+```
+app/
+  dashboard/
+    layout.tsx            # Auth gate + DashboardShell + cmd-K wiring
+    page.tsx              # Overview (KPI hero, accounts, last analysis, activity)
+    holdings/page.tsx     # Portfolio editor with type-ahead instrument picker
+    analysis/page.tsx     # 4 streaming agent panels
+    research/page.tsx     # Researcher panel + per-symbol doc lists
+    settings/page.tsx     # Profile + system info
+    error.tsx             # Dashboard error boundary
+  api/agents/
+    reporter/route.ts     # Streaming Reporter
+    retirement/route.ts   # Streaming Retirement
+  global-error.tsx        # Last-resort error boundary
+components/
+  dashboard-shell.tsx     # Topbar + sidebar + cmd-K mount
+  command-palette.tsx     # ⌘K palette with real action execution
+  charts/                 # Recharts wrappers (donut, allocation legend, etc.)
+  ui/primitives.tsx       # Card, Button, Badge, KPITile, etc.
+lib/
+  agents/
+    tagger.ts             # generateObject classification
+    reporter.ts           # generateText/streamText + RAG context build
+    charter.ts            # generateObject chart specs
+    retirement.ts         # Monte Carlo + LLM commentary (streaming)
+    researcher.ts         # Yahoo news fetch + dedup hash
+    embedder.ts           # OpenAI text-embedding-3-small wrapper
+  finance/
+    aggregate.ts          # Pure-TS portfolio aggregation
+    assumptions.ts        # Market constants (means, stds, inflation)
+    prices.ts             # Provider dispatcher (Polygon → Yahoo)
+    providers/
+      polygon.ts
+      yahoo.ts
+  db/
+    schema.ts             # Drizzle table definitions
+    queries.ts            # All DB read/write functions
+  actions/                # Server actions (portfolio, profile, analyze, research)
+  ai/models.ts            # Model registry
+  telemetry.ts            # Structured agent logging (Vercel + LangFuse-ready)
+  streaming.ts            # Client-side stream reader with metadata sentinel
+drizzle/
+  migrations/             # Generated SQL migrations
+  seed/etfs.ts            # 22 seeded ETFs
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Local dev
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm install
+cp .env.example .env.local             # fill in real keys
+vercel link                            # connect to your Vercel project
+vercel env pull .env.local             # populate from Vercel
+pnpm db:migrate                        # run Drizzle migrations against Neon
+pnpm db:seed                           # seed the 22 ETFs
+pnpm dev                               # http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The build verifies TypeScript and produces a fully tree-shaken bundle:
 
-## Learn More
+```bash
+pnpm build
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Database
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+pnpm db:generate    # generate a migration from schema changes
+pnpm db:migrate     # apply pending migrations
+pnpm db:push        # (alternative) push schema directly without migration files
+pnpm db:studio      # open Drizzle Studio
+pnpm db:seed        # re-seed the 22 ETF instruments
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The pgvector extension was enabled via `scripts/check-pgvector.ts` (one
+time, idempotent).
 
-## Deploy on Vercel
+## Phase journey
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Phase | What landed |
+|---|---|
+| 0 | Scaffold Next.js 16 + Vercel + Neon + Clerk |
+| 1 | Drizzle schema (users, instruments, accounts, positions, jobs) + seeded 22 ETFs |
+| 2 | Auth shell + dashboard route |
+| 3 | First agent (Tagger) end-to-end |
+| 4 | Multi-agent Planner pattern + per-user portfolios + UI overhaul |
+| 4d | On-demand instrument creation via Tagger (any symbol) |
+| 4e | Polygon.io prices, Yahoo fallback, hybrid bulk refresh |
+| Polish | Hero donut, sparklines, aurora bg, animations, last-analysis card, activity feed |
+| 5 | Researcher pipeline (Yahoo news per holding, dedup hash, manual run) |
+| 6 | pgvector embeddings + retrieval, Reporter RAG over real news |
+| 7 | Streaming Reporter + Retirement, ⌘K command palette |
+| 8 | Telemetry, error boundaries, docs |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Cost reality (per analysis run)
+
+| Step | Cost |
+|---|---|
+| 4 LLM calls (Tagger×N + Reporter + Charter + Retirement) on gpt-5-mini | ~$0.005 |
+| ~12 doc embeds + 1 query embed via text-embedding-3-small | ~$0.0001 |
+| 5 Polygon API calls (free tier) | $0 |
+| Neon DB queries | $0 (free tier) |
+| Vercel function execution | $0 (free tier) |
+
+Total: **~half a cent per full analysis**. No paid integrations needed
+to hit feature parity with the AWS original.
+
+## See also
+
+- [OBSERVABILITY.md](OBSERVABILITY.md) — telemetry today + LangFuse upgrade path
+- [.env.example](.env.example) — full env var list with sources
+
+## License
+
+MIT

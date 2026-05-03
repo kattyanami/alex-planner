@@ -1,5 +1,6 @@
 import { generateText, streamText } from "ai";
 import { MODELS } from "@/lib/ai/models";
+import { traceAgent } from "@/lib/telemetry";
 import { embedText } from "./embedder";
 import { findRelevantDocsForSymbol } from "@/lib/db/queries";
 
@@ -207,6 +208,13 @@ async function buildResearchContext(
 }
 
 export async function generateReport(portfolio: Portfolio, user: UserProfile) {
+  return traceAgent("reporter", () => generateReportInner(portfolio, user), {
+    model: "gpt-5-mini",
+    streaming: false,
+  });
+}
+
+async function generateReportInner(portfolio: Portfolio, user: UserProfile) {
   const summary = formatPortfolioForAnalysis(portfolio, user);
   const start = Date.now();
 

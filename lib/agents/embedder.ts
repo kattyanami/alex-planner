@@ -7,6 +7,7 @@
  */
 import { embed, embedMany } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { traceAgent } from "@/lib/telemetry";
 
 const embeddingModel = openai.embedding("text-embedding-3-small");
 
@@ -34,11 +35,22 @@ export function buildDocText(doc: {
 }
 
 export async function embedText(text: string): Promise<EmbeddingResult> {
-  const { embedding, usage } = await embed({
-    model: embeddingModel,
-    value: text,
-  });
-  return { values: embedding, tokens: usage?.tokens ?? 0 };
+  return traceAgent(
+    "embedder",
+    async () => {
+      const { embedding, usage } = await embed({
+        model: embeddingModel,
+        value: text,
+      });
+      return {
+        values: embedding,
+        tokens: usage?.tokens ?? 0,
+        tokensIn: usage?.tokens ?? 0,
+        tokensOut: 0,
+      };
+    },
+    { model: "text-embedding-3-small", mode: "single", chars: text.length },
+  ) as Promise<EmbeddingResult>;
 }
 
 export async function embedBatch(texts: string[]): Promise<{
@@ -46,12 +58,20 @@ export async function embedBatch(texts: string[]): Promise<{
   tokens: number;
 }> {
   if (texts.length === 0) return { embeddings: [], tokens: 0 };
-  const { embeddings, usage } = await embedMany({
-    model: embeddingModel,
-    values: texts,
-  });
-  return {
-    embeddings: embeddings.map((e) => e),
-    tokens: usage?.tokens ?? 0,
-  };
+  return traceAgent(
+    "embedder",
+    async () => {
+      const { embeddings, usage } = await embedMany({
+        model: embeddingModel,
+        values: texts,
+      });
+      return {
+        embeddings: embeddings.map((e) => e),
+        tokens: usage?.tokens ?? 0,
+        tokensIn: usage?.tokens ?? 0,
+        tokensOut: 0,
+      };
+    },
+    { model: "text-embedding-3-small", mode: "batch", batchSize: texts.length },
+  ) as Promise<{ embeddings: number[][]; tokens: number }>;
 }

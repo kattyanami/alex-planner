@@ -2,6 +2,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { MODELS } from "@/lib/ai/models";
 import { aggregatePortfolio } from "@/lib/finance/aggregate";
+import { traceAgent } from "@/lib/telemetry";
 import type { Portfolio } from "./reporter";
 
 export { aggregatePortfolio };
@@ -79,6 +80,12 @@ Chart ideas (pick 4-6):
 - top_holdings (horizontalBar)`;
 
 export async function generateCharts(portfolio: Portfolio) {
+  return traceAgent("charter", () => generateChartsInner(portfolio), {
+    model: "gpt-5-mini",
+  });
+}
+
+async function generateChartsInner(portfolio: Portfolio) {
   const summary = aggregatesAsMarkdown(portfolio);
   const start = Date.now();
 
