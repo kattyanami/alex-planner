@@ -1,9 +1,9 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { Clock, Database, Globe, Newspaper } from "lucide-react";
+import { Database, Globe } from "lucide-react";
 import { getResearchSummaryForUser, getUserAccountsDetailed } from "@/lib/db/queries";
 import { PageHeader } from "@/components/dashboard-shell";
-import { Badge, Card, CardBody, CardHeader } from "@/components/ui/primitives";
+import { Card, CardBody, CardHeader } from "@/components/ui/primitives";
 import { ResearcherPanel } from "@/components/researcher-panel";
 
 export default async function ResearchPage() {
@@ -22,33 +22,11 @@ export default async function ResearchPage() {
       <PageHeader
         title="Research"
         description="Per-holding news fetched from Yahoo Finance. Deduplicated by URL hash. Will feed Phase 6 pgvector retrieval so the Reporter agent can RAG over real headlines."
-        action={<Badge tone="warning">Cron disabled — manual only</Badge>}
       />
 
       <ResearcherPanel summary={summary.symbols} hasHoldings={hasHoldings} />
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader
-            icon={<Clock className="size-4" />}
-            title="Scheduler"
-            description="Vercel Cron"
-          />
-          <CardBody className="text-sm text-zinc-500 dark:text-zinc-400 space-y-2">
-            <p>
-              Cron route exists at{" "}
-              <code className="font-mono text-xs px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800/60">
-                /api/cron/research
-              </code>{" "}
-              but is not yet on a schedule.
-            </p>
-            <p>
-              To enable: add the cron block to{" "}
-              <code className="font-mono text-xs">vercel.json</code> (the route
-              file has the exact snippet to paste in its top comment).
-            </p>
-          </CardBody>
-        </Card>
+      <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader
             icon={<Globe className="size-4" />}
@@ -58,8 +36,8 @@ export default async function ResearchPage() {
           <CardBody className="text-sm text-zinc-500 dark:text-zinc-400">
             Currently fetches ~6 recent news articles per holding via{" "}
             <code className="font-mono text-xs">yahoo-finance2</code>. Upgrade
-            path: replace inner fetcher with Vercel Sandbox + Playwright for
-            JS-heavy sources (SEC EDGAR, earnings transcripts).
+            path: replace the inner fetcher with Vercel Sandbox + Playwright
+            for JS-heavy sources (SEC EDGAR, earnings transcripts).
           </CardBody>
         </Card>
         <Card>
