@@ -1,5 +1,7 @@
 import { generateText } from "ai";
 import { MODELS } from "@/lib/ai/models";
+import { embedText } from "./embedder";
+import { findRelevantDocsForSymbol } from "@/lib/db/queries";
 
 export type Position = {
   symbol: string;
@@ -139,20 +141,87 @@ function formatPortfolioForAnalysis(portfolio: Portfolio, user: UserProfile) {
   return lines.join("\n");
 }
 
+/**
+ * Build the "Recent news context" block by retrieving the most relevant
+ * research documents per holding via pgvector cosine similarity.
+ *
+ * Strategy: build one query embedding from a portfolio-aware question
+ * ("What recent developments affect a {role} investor's holdings: SPY,
+ * BND, AAPL?"), then retrieve top-K per symbol. The same query embedding
+ * is reused across symbols — one OpenAI call covers all retrievals.
+ */
+async function buildResearchContext(
+  portfolio: Portfolio,
+  user: UserProfile,
+): Promise<{ block: string; docCount: number; symbolsWithDocs: number }> {
+  const symbols = Array.from(
+    new Set(
+      portfolio.accounts.flatMap((a) => a.positions.map((p) => p.symbol)),
+    ),
+  );
+  if (symbols.length === 0) {
+    return { block: "", docCount: 0, symbolsWithDocs: 0 };
+  }
+
+  const horizon = user.years_until_retirement
+    ? `${user.years_until_retirement}-year`
+    : "long-term";
+  const queryText = `Material recent developments and risks affecting a ${horizon} investor with positions in ${symbols.join(", ")}: market-moving news, earnings, sector rotations, geopolitical shocks, regulation, ratings actions.`;
+
+  const { values: queryEmbedding } = await embedText(queryText);
+
+  const perSymbol = await Promise.all(
+    symbols.map(async (sym) => ({
+      symbol: sym,
+      docs: await findRelevantDocsForSymbol(sym, queryEmbedding, 3),
+    })),
+  );
+
+  const lines: string[] = [];
+  let totalDocs = 0;
+  let symbolsWithDocs = 0;
+  for (const { symbol, docs } of perSymbol) {
+    if (docs.length === 0) continue;
+    symbolsWithDocs++;
+    lines.push(`\n### ${symbol}`);
+    for (const d of docs) {
+      totalDocs++;
+      const sim = d.similarity != null ? ` (rel ${(d.similarity * 100).toFixed(0)}%)` : "";
+      const date = d.publishedAt
+        ? new Date(d.publishedAt).toISOString().slice(0, 10)
+        : "—";
+      lines.push(`- [${date}] ${d.title}${sim}`);
+    }
+  }
+
+  if (totalDocs === 0) return { block: "", docCount: 0, symbolsWithDocs: 0 };
+
+  return {
+    block:
+      "\n\n## Recent News Context (retrieved via pgvector)\n" +
+      "Cite specifics when relevant; if a headline contradicts your generic recommendation, surface that tension.\n" +
+      lines.join("\n"),
+    docCount: totalDocs,
+    symbolsWithDocs,
+  };
+}
+
 export async function generateReport(portfolio: Portfolio, user: UserProfile) {
   const summary = formatPortfolioForAnalysis(portfolio, user);
   const start = Date.now();
+
+  const research = await buildResearchContext(portfolio, user);
 
   const { text, usage } = await generateText({
     model: MODELS.reporter,
     system: REPORTER_INSTRUCTIONS,
     prompt: `Analyze this investment portfolio and write a comprehensive report.
 
-${summary}
+${summary}${research.block}
 
 Generate a detailed, professional analysis report in markdown format. Include all the standard sections (Executive Summary, Portfolio Composition, Diversification, Risk, Retirement Readiness, Recommendations, Conclusion).
 
-Make it informative yet accessible to a retail investor.`,
+Make it informative yet accessible to a retail investor.${research.docCount > 0 ? " Cite specific news headlines from the Recent News Context section when relevant." : ""}`,
   });
 
   return {
@@ -160,5 +229,7 @@ Make it informative yet accessible to a retail investor.`,
     tokensIn: usage.inputTokens ?? 0,
     tokensOut: usage.outputTokens ?? 0,
     ms: Date.now() - start,
+    ragDocs: research.docCount,
+    ragSymbols: research.symbolsWithDocs,
   };
 }

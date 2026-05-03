@@ -2,10 +2,13 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
+import { buildDocText, embedBatch } from "@/lib/agents/embedder";
 import { researchSymbols } from "@/lib/agents/researcher";
 import {
   getUserAccountsDetailed,
+  listUnembeddedDocs,
   logActivity,
+  setDocEmbedding,
   upsertResearchDocs,
 } from "@/lib/db/queries";
 
@@ -16,6 +19,8 @@ export type RunResearcherResult =
       fetched: number;
       inserted: number;
       skipped: number;
+      embedded: number;
+      embeddingTokens: number;
       ms: number;
       perSymbol: Array<{ symbol: string; fetched: number }>;
     }
@@ -46,6 +51,25 @@ export async function runResearcherForUserAction(): Promise<RunResearcherResult>
     const docs = await researchSymbols(symbols);
     const { inserted, skipped } = await upsertResearchDocs(docs);
 
+    // Auto-embed: every doc that doesn't have an embedding yet (covers both
+    // freshly-inserted ones and any older rows from before Phase 6).
+    const pending = await listUnembeddedDocs(50);
+    let embedded = 0;
+    let embeddingTokens = 0;
+    if (pending.length > 0) {
+      const texts = pending.map((d) =>
+        buildDocText({ symbol: d.symbol, title: d.title, content: d.content }),
+      );
+      const { embeddings, tokens } = await embedBatch(texts);
+      await Promise.all(
+        pending.map((d, i) =>
+          embeddings[i] ? setDocEmbedding(d.id, embeddings[i]) : Promise.resolve(),
+        ),
+      );
+      embedded = embeddings.length;
+      embeddingTokens = tokens;
+    }
+
     const perSymbol = symbols.map((sym) => ({
       symbol: sym,
       fetched: docs.filter((d) => d.symbol === sym).length,
@@ -54,13 +78,15 @@ export async function runResearcherForUserAction(): Promise<RunResearcherResult>
     await logActivity(
       userId,
       "analysis_completed", // closest existing kind; could add 'research_run' later
-      `Researcher fetched ${docs.length} docs across ${symbols.length} symbols (${inserted} new, ${skipped} dup)`,
+      `Researcher fetched ${docs.length} docs across ${symbols.length} symbols (${inserted} new, ${skipped} dup, ${embedded} embedded)`,
       {
         kind: "research_run",
         symbols: symbols.length,
         fetched: docs.length,
         inserted,
         skipped,
+        embedded,
+        embeddingTokens,
       },
     );
     revalidatePath("/dashboard/research");
@@ -72,6 +98,8 @@ export async function runResearcherForUserAction(): Promise<RunResearcherResult>
       fetched: docs.length,
       inserted,
       skipped,
+      embedded,
+      embeddingTokens,
       ms: Date.now() - start,
       perSymbol,
     };

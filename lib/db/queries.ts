@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "./index";
 import {
   accounts,
@@ -548,6 +548,94 @@ export async function listResearchForSymbols(
     }
   }
   return Array.from(grouped.values()).flat();
+}
+
+/**
+ * Find docs that don't have embeddings yet. Used for backfill after Researcher
+ * adds new rows.
+ */
+export async function listUnembeddedDocs(limit = 50): Promise<ResearchDocument[]> {
+  return db
+    .select()
+    .from(researchDocuments)
+    .where(isNull(researchDocuments.embedding))
+    .orderBy(desc(researchDocuments.fetchedAt))
+    .limit(limit);
+}
+
+export async function setDocEmbedding(id: string, embedding: number[]) {
+  await db
+    .update(researchDocuments)
+    .set({ embedding, embeddedAt: new Date() })
+    .where(eq(researchDocuments.id, id));
+}
+
+/**
+ * Top-K relevant research docs for a given symbol, ranked by cosine
+ * similarity to the query embedding. Falls back to most-recent-by-fetch
+ * when no embedded docs exist for that symbol.
+ */
+export async function findRelevantDocsForSymbol(
+  symbol: string,
+  queryEmbedding: number[],
+  k = 4,
+): Promise<Array<ResearchDocument & { similarity: number | null }>> {
+  // Drizzle pgvector helper: cosineDistance returns 0 = identical, 2 = opposite.
+  // We expose similarity = 1 - distance / 2 so callers see 0..1 (1 = perfect).
+  const embeddingLiteral = sql.raw(
+    `'[${queryEmbedding.join(",")}]'::vector`,
+  );
+
+  const rows = await db
+    .select({
+      id: researchDocuments.id,
+      symbol: researchDocuments.symbol,
+      source: researchDocuments.source,
+      url: researchDocuments.url,
+      title: researchDocuments.title,
+      content: researchDocuments.content,
+      hash: researchDocuments.hash,
+      publishedAt: researchDocuments.publishedAt,
+      fetchedAt: researchDocuments.fetchedAt,
+      metadata: researchDocuments.metadata,
+      embedding: researchDocuments.embedding,
+      embeddedAt: researchDocuments.embeddedAt,
+      distance: sql<number>`${researchDocuments.embedding} <=> ${embeddingLiteral}`,
+    })
+    .from(researchDocuments)
+    .where(
+      and(
+        eq(researchDocuments.symbol, symbol),
+        sql`${researchDocuments.embedding} IS NOT NULL`,
+      ),
+    )
+    .orderBy(sql`${researchDocuments.embedding} <=> ${embeddingLiteral}`)
+    .limit(k);
+
+  return rows.map((r) => ({
+    ...r,
+    similarity: r.distance != null ? 1 - Number(r.distance) / 2 : null,
+  }));
+}
+
+/**
+ * Aggregate counts: how many docs per symbol are embedded vs total.
+ * Used by the Research page UI.
+ */
+export async function getEmbeddingStatus(): Promise<{
+  total: number;
+  embedded: number;
+  pending: number;
+}> {
+  const [counts] = await db
+    .select({
+      total: sql<number>`COUNT(*)::int`,
+      embedded: sql<number>`COUNT(${researchDocuments.embedding})::int`,
+    })
+    .from(researchDocuments);
+  const total = counts?.total ?? 0;
+  const embedded = counts?.embedded ?? 0;
+  return { total, embedded, pending: total - embedded };
 }
 
 export async function getResearchSummaryForUser(clerkUserId: string): Promise<{

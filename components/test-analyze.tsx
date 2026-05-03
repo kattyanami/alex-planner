@@ -225,7 +225,7 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
         <AgentCard
           title="Reporter"
           icon={<FileText className="size-4" />}
-          subtitle="Markdown portfolio analysis"
+          subtitle="Markdown analysis (RAG over research)"
           state={reporter}
           stats={
             reporter.data
@@ -234,9 +234,21 @@ export function TestAnalyze({ hasPortfolio = true }: { hasPortfolio?: boolean })
           }
         >
           {reporter.data && (
-            <pre className="text-xs whitespace-pre-wrap font-sans bg-zinc-50 dark:bg-zinc-900/60 p-3 rounded-lg max-h-[320px] overflow-y-auto leading-relaxed">
-              {reporter.data.markdown}
-            </pre>
+            <div className="space-y-2">
+              {reporter.data.ragDocs > 0 && (
+                <div className="flex items-center gap-2 text-xs">
+                  <Badge tone="accent">RAG</Badge>
+                  <span className="text-zinc-600 dark:text-zinc-400">
+                    {reporter.data.ragDocs} doc{reporter.data.ragDocs === 1 ? "" : "s"} retrieved
+                    across {reporter.data.ragSymbols} symbol
+                    {reporter.data.ragSymbols === 1 ? "" : "s"}
+                  </span>
+                </div>
+              )}
+              <pre className="text-xs whitespace-pre-wrap font-sans bg-zinc-50 dark:bg-zinc-900/60 p-3 rounded-lg max-h-[320px] overflow-y-auto leading-relaxed">
+                {reporter.data.markdown}
+              </pre>
+            </div>
           )}
         </AgentCard>
 

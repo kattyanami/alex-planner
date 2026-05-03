@@ -54,9 +54,13 @@ export function ResearcherPanel({
         setMsg({ kind: "err", text: r.error });
         return;
       }
+      const embedPart =
+        r.embedded > 0
+          ? ` Embedded ${r.embedded} (${r.embeddingTokens.toLocaleString()} tokens).`
+          : "";
       setMsg({
         kind: "ok",
-        text: `Fetched ${r.fetched} docs across ${r.symbols} symbols — ${r.inserted} new, ${r.skipped} dup. (${(r.ms / 1000).toFixed(1)}s)`,
+        text: `Fetched ${r.fetched} docs across ${r.symbols} symbols — ${r.inserted} new, ${r.skipped} dup.${embedPart} (${(r.ms / 1000).toFixed(1)}s)`,
       });
       setTimeout(() => setMsg(null), 10_000);
     });

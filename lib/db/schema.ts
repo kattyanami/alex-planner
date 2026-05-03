@@ -11,6 +11,7 @@ import {
   unique,
   uuid,
   varchar,
+  vector,
 } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
@@ -165,10 +166,14 @@ export const researchDocuments = pgTable(
     publishedAt: timestamp("published_at"),
     fetchedAt: timestamp("fetched_at").defaultNow().notNull(),
     metadata: jsonb("metadata"),
+    embedding: vector("embedding", { dimensions: 1536 }),
+    embeddedAt: timestamp("embedded_at"),
   },
   (t) => [
     index("idx_research_symbol_fetched").on(t.symbol, t.fetchedAt),
     unique("research_symbol_hash_unique").on(t.symbol, t.hash),
+    index("idx_research_embedding_hnsw")
+      .using("hnsw", t.embedding.op("vector_cosine_ops")),
   ],
 );
 
